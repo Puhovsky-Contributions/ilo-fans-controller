@@ -2,17 +2,34 @@
 <?php
 /**
  * Fan Control Daemon
- * 
+ *
  * Automatically adjusts fan speeds based on temperatures and the active profile.
- * Run: php fan-daemon.php
- * 
- * To run in background: nohup php fan-daemon.php > /dev/null 2>&1 &
+ * Run: php fan-daemon.php [server-id]
+ *
+ * To run in background: nohup php fan-daemon.php server1 > /dev/null 2>&1 &
  */
 
 require 'config.inc.php';
 
-define('CONFIG_FILE', __DIR__ . '/auto-control.json');
-define('PID_FILE', __DIR__ . '/fan-daemon.pid');
+$serverId = $argv[1] ?? 'default';
+
+// Load matching server config
+$servers = get_servers();
+$serverConfig = null;
+foreach ($servers as $s) {
+    if ($s['id'] === $serverId) {
+        $serverConfig = $s;
+        break;
+    }
+}
+// Fall back to first server if ID not found (e.g. legacy 'default')
+if ($serverConfig === null) {
+    $serverConfig = $servers[0];
+    $serverId = $serverConfig['id'];
+}
+
+define('CONFIG_FILE', '/data/auto-control-' . $serverId . '.json');
+define('PID_FILE', __DIR__ . '/fan-daemon-' . $serverId . '.pid');
 
 // Check if already running
 if (file_exists(PID_FILE)) {
@@ -53,10 +70,10 @@ function get_config()
 
 function get_temperatures()
 {
-    global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;
+    global $serverConfig;
 
-    $curl_handle = curl_init("https://$ILO_HOST/redfish/v1/chassis/1/Thermal");
-    curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");
+    $curl_handle = curl_init("https://{$serverConfig['host']}/redfish/v1/chassis/1/Thermal");
+    curl_setopt($curl_handle, CURLOPT_USERPWD, "{$serverConfig['username']}:{$serverConfig['password']}");
     curl_setopt($curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
     curl_setopt($curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
     curl_setopt($curl_handle, CURLOPT_FOLLOWLOCATION, true);
@@ -131,14 +148,15 @@ function calculate_fan_speed($temps, $profile)
 
 function set_fan_speed($speed, $fanCount)
 {
-    global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD, $MINIMUM_FAN_SPEED;
+    global $serverConfig;
 
-    $speed = max($MINIMUM_FAN_SPEED, min(100, $speed));
+    $minFanSpeed = $serverConfig['minimumFanSpeed'] ?? 10;
+    $speed = max($minFanSpeed, min(100, $speed));
     $pwm = (int) ceil($speed / 100 * 255);
 
     try {
-        $ssh = ssh2_connect($ILO_HOST, 22, ["kex" => "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1", "hostkey" => "ssh-rsa,ssh-dss"]);
-        if (!$ssh || !ssh2_auth_password($ssh, $ILO_USERNAME, $ILO_PASSWORD)) {
+        $ssh = ssh2_connect($serverConfig['host'], 22, ["kex" => "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1", "hostkey" => "ssh-rsa,ssh-dss"]);
+        if (!$ssh || !ssh2_auth_password($ssh, $serverConfig['username'], $serverConfig['password'])) {
             return false;
         }
 
@@ -167,6 +185,7 @@ function set_fan_speed($speed, $fanCount)
 
 // Main loop
 echo "=== Fan Control Daemon Started ===\n";
+echo "Server: $serverId ({$serverConfig['host']})\n";
 echo "PID: " . getmypid() . "\n";
 echo "Config file: " . CONFIG_FILE . "\n\n";
 
