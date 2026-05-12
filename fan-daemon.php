@@ -137,7 +137,7 @@ function set_fan_speed($speed, $fanCount)
     $pwm = (int) ceil($speed / 100 * 255);
 
     try {
-        $ssh = ssh2_connect($ILO_HOST, 22);
+        $ssh = ssh2_connect($ILO_HOST, 22, ["kex" => "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1", "hostkey" => "ssh-rsa,ssh-dss"]);
         if (!$ssh || !ssh2_auth_password($ssh, $ILO_USERNAME, $ILO_PASSWORD)) {
             return false;
         }

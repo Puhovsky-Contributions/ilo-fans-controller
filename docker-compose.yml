@@ -1,34 +1,17 @@
-version: "3.8"
-
 services:
   ilo-fans-controller:
     image: ilo-fans-controller:latest
     ports:
       - "4080:80"
     environment:
-      ILO_HOST: 'your-ilo-ip'
-      ILO_USERNAME: 'your-ilo-username'
-      ILO_PASSWORD: 'your-ilo-password'
-      MINIMUM_FAN_SPEED: '10'
-      AUTO_DAEMON: 'true'
+      ILO_HOST: '${ILO_HOST}'
+      ILO_USERNAME: '${ILO_USERNAME}'
+      ILO_PASSWORD: '${ILO_PASSWORD}'
+      MINIMUM_FAN_SPEED: '${MINIMUM_FAN_SPEED}'
+      AUTO_DAEMON: '${AUTO_DAEMON}'
     volumes:
       - ilo-fans-data:/data
-    deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
+    restart: unless-stopped          # plain Docker equivalent
 
 volumes:
   ilo-fans-data:

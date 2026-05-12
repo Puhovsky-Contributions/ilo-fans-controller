@@ -27,7 +27,7 @@ function get_fans()
 {
 	global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;  // From config.inc.php
 
-	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/chassis/1/Thermal");
+	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/Chassis/1/Thermal/");
 
 	curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");  // Authentication (Basic)
 
@@ -102,7 +102,7 @@ function get_temperatures()
 {
 	global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;
 
-	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/chassis/1/Thermal");
+	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/Chassis/1/Thermal/");
 
 	curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");
 	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
@@ -265,7 +265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						$fan_index = array_search($fan, array_keys($FANS));
 						if (($speed >= $MINIMUM_FAN_SPEED && $speed <= 100) && $speed != $FANS[$fan]) {  // Check if the speed is valid and different from the current fan's speed
 							if (!$connected) {  // Connect to iLO (only once)
-								$ssh_handle = ssh2_connect($ILO_HOST, 22);
+								$ssh_handle = ssh2_connect($ILO_HOST, 22, ["kex" => "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1", "hostkey" => "ssh-rsa,ssh-dss"]);
 								if (!$ssh_handle || !ssh2_auth_password($ssh_handle, $ILO_USERNAME, $ILO_PASSWORD)) {
 									die(json_encode(['error' => 'SSH connection failed']));
 								}
