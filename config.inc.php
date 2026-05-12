@@ -22,4 +22,21 @@ $ILO_PASSWORD = 'your-ilo-password';  // Ex. AdministratorPassword1234
 $MINIMUM_FAN_SPEED = 10;
 $AUTO_DAEMON = true;
 
+function get_servers() {
+    $serversFile = '/data/servers.json';
+    if (file_exists($serversFile)) {
+        $data = json_decode(file_get_contents($serversFile), true);
+        if (is_array($data) && count($data) > 0) return $data;
+    }
+    global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD, $MINIMUM_FAN_SPEED;
+    return [[
+        'id'             => 'server1',
+        'name'           => 'Server',
+        'host'           => $ILO_HOST,
+        'username'       => $ILO_USERNAME,
+        'password'       => $ILO_PASSWORD,
+        'minimumFanSpeed' => $MINIMUM_FAN_SPEED,
+    ]];
+}
+
 ?>

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "server1",
+    "name": "Main Server",
+    "host": "10.10.9.110",
+    "username": "admin",
+    "password": "secret",
+    "minimumFanSpeed": 10
+  },
+  {
+    "id": "server2",
+    "name": "Secondary Server",
+    "host": "10.10.9.111",
+    "username": "admin",
+    "password": "secret",
+    "minimumFanSpeed": 10
+  }
+]
