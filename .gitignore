@@ -10,9 +10,12 @@ tailwind.config.js
 # Config files with credentials
 config.inc.php
 .env
+servers.json
 
 # Runtime files
 *.pid
+auto-control-*.json
+index.php
 
 # Data directory (persistent)
 data/

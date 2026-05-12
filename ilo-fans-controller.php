@@ -2,39 +2,34 @@
 // Require config variables
 require 'config.inc.php';
 
-function get_presets()
+function get_presets($server)
 {
-	if (!file_exists('presets.json'))  // Return default presets if the file doesn't exist
-		return [
-			[
-				'name' => 'Silent Mode',
-				'speeds' => [15],
-			],
-			[
-				'name' => 'Normal Mode',
-				'speeds' => [50],
-			],
-			[
-				'name' => 'Turbo Mode',
-				'speeds' => [100],
-			]
-		];
-	else
+	$id = $server['id'];
+	if (file_exists("presets-$id.json"))
+		return json_decode(file_get_contents("presets-$id.json"), true);
+	if (file_exists('presets.json'))
 		return json_decode(file_get_contents('presets.json'), true);
+	return [
+		[
+			'name' => 'Silent Mode',
+			'speeds' => [15],
+		],
+		[
+			'name' => 'Normal Mode',
+			'speeds' => [50],
+		],
+		[
+			'name' => 'Turbo Mode',
+			'speeds' => [100],
+		]
+	];
 }
 
-function get_fans()
+function get_fans($server)
 {
-	global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;  // From config.inc.php
+	$curl_handle = curl_init("https://{$server['host']}/redfish/v1/Chassis/1/Thermal/");
 
-	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/Chassis/1/Thermal/");
-
-	curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");  // Authentication (Basic)
-
-	// An attempt to speed up the request
-	// curl_setopt($curl_handle, CURLOPT_ENCODING, '');
-	// curl_setopt($curl_handle, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-	// curl_setopt($curl_handle, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
+	curl_setopt($curl_handle, CURLOPT_USERPWD, "{$server['username']}:{$server['password']}");
 
 	// Disable SSL verification
 	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
@@ -44,10 +39,6 @@ function get_fans()
 	curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);  // Return the JSON data
 
 	$raw_ilo_data = curl_exec($curl_handle);
-
-	// Print errors if any
-	// echo curl_error($curl_handle);
-	// echo curl_errno($curl_handle);
 
 	if ($raw_ilo_data) {  // If the request was successful
 		$fans = [];
@@ -63,7 +54,7 @@ function get_fans()
 
 function get_temp_zone($name) {
 	$lowerName = strtolower($name);
-	
+
 	// Define zones and their patterns
 	$zones = [
 		'ambient' => ['inlet', 'exhaust', 'ambient'],
@@ -101,13 +92,11 @@ function get_zone_info($zone) {
 	return $zoneInfos[$zone] ?? $zoneInfos['other'];
 }
 
-function get_temperatures()
+function get_temperatures($server)
 {
-	global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;
+	$curl_handle = curl_init("https://{$server['host']}/redfish/v1/Chassis/1/Thermal/");
 
-	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/Chassis/1/Thermal/");
-
-	curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");
+	curl_setopt($curl_handle, CURLOPT_USERPWD, "{$server['username']}:{$server['password']}");
 	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
 	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
 	curl_setopt($curl_handle, CURLOPT_FOLLOWLOCATION, true);
@@ -128,7 +117,7 @@ function get_temperatures()
 
 					if ($reading !== null && $status === 'Enabled') {
 					$zone = get_temp_zone($name);
-					
+
 					if (!isset($grouped[$zone])) {
 						$zoneInfo = get_zone_info($zone);
 						$grouped[$zone] = [
@@ -143,13 +132,13 @@ function get_temperatures()
 							'maxCritical' => 0,
 						];
 					}
-					
+
 					$grouped[$zone]['sensors'][] = [
 						'name' => $name,
 						'reading' => $reading,
 						'critical' => $critical
 					];
-					
+
 					$grouped[$zone]['min'] = min($grouped[$zone]['min'], $reading);
 					$grouped[$zone]['max'] = max($grouped[$zone]['max'], $reading);
 					if ($critical) {
@@ -157,7 +146,7 @@ function get_temperatures()
 					}
 				}
 			}
-			
+
 			// Calculer les moyennes
 			foreach ($grouped as $zone => &$group) {
 				$sum = array_sum(array_column($group['sensors'], 'reading'));
@@ -180,10 +169,14 @@ function get_temperatures()
 	return $sorted;
 }
 
-function get_auto_control() {
-	$configFile = __DIR__ . '/auto-control.json';
+function get_auto_control($server) {
+	$id = $server['id'];
+	$configFile = __DIR__ . "/auto-control-$id.json";
+	if (!file_exists($configFile))
+		$configFile = __DIR__ . '/auto-control.json';
+
 	if (!file_exists($configFile)) {
-		return [
+		$config = [
 			'enabled' => false,
 			'profile' => 'normal',
 			'profiles' => [
@@ -194,11 +187,12 @@ function get_auto_control() {
 			'checkInterval' => 30,
 			'daemonRunning' => false
 		];
+		return $config;
 	}
 	$config = json_decode(file_get_contents($configFile), true);
-	
+
 	// Check if daemon is running
-	$pidFile = __DIR__ . '/fan-daemon.pid';
+	$pidFile = __DIR__ . "/fan-daemon-$id.pid";
 	$config['daemonRunning'] = false;
 	if (file_exists($pidFile)) {
 		$pid = (int) file_get_contents($pidFile);
@@ -206,56 +200,62 @@ function get_auto_control() {
 			$config['daemonRunning'] = true;
 		}
 	}
-	
+
 	return $config;
 }
 
-function save_auto_control($config) {
-	$configFile = __DIR__ . '/auto-control.json';
+function save_auto_control($config, $server) {
+	$id = $server['id'];
+	$configFile = __DIR__ . "/auto-control-$id.json";
 	unset($config['daemonRunning']); // Don't save runtime state
 	file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT));
-	return get_auto_control();
+	return get_auto_control($server);
 }
 
+$SERVERS_CONFIG = get_servers();
+
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-	$FANS = get_fans();
-	$TEMPERATURES = get_temperatures();
-	$AUTO_CONTROL = get_auto_control();
+	$serverIndex = isset($_GET['server']) ? (int)$_GET['server'] : 0;
+	$serverIndex = max(0, min($serverIndex, count($SERVERS_CONFIG) - 1));
+	$server = $SERVERS_CONFIG[$serverIndex];
 
-	// Return fans in JSON format with ?api=fans
-	if (isset($_GET['api']) && $_GET['api'] == 'fans') {
+	if (isset($_GET['api'])) {
 		header('Content-Type: application/json');
-		die(json_encode($FANS));
+		switch ($_GET['api']) {
+			case 'fans':        die(json_encode(get_fans($server)));
+			case 'temperatures': die(json_encode(get_temperatures($server)));
+			case 'autocontrol': die(json_encode(get_auto_control($server)));
+			case 'presets':     die(json_encode(get_presets($server)));
+		}
 	}
 
-	// Return temperatures in JSON format with ?api=temperatures
-	if (isset($_GET['api']) && $_GET['api'] == 'temperatures') {
-		header('Content-Type: application/json');
-		die(json_encode($TEMPERATURES));
-	}
-
-	// Return auto-control config in JSON format with ?api=autocontrol
-	if (isset($_GET['api']) && $_GET['api'] == 'autocontrol') {
-		header('Content-Type: application/json');
-		die(json_encode($AUTO_CONTROL));
-	}
-
-	$PRESETS = get_presets();
-
-	// Return presets in JSON format with ?api=presets
-	if (isset($_GET['api']) && $_GET['api'] == 'presets') {
-		header('Content-Type: application/json');
-		die(json_encode($PRESETS));
+	// Full page load — build data for all servers
+	$ALL_DATA = [];
+	foreach ($SERVERS_CONFIG as $srv) {
+		$ALL_DATA[] = [
+			'id'           => $srv['id'],
+			'name'         => $srv['name'],
+			'host'         => $srv['host'],
+			'fans'         => get_fans($srv),
+			'temperatures' => get_temperatures($srv),
+			'autoControl'  => get_auto_control($srv),
+			'presets'      => get_presets($srv),
+			'minFanSpeed'  => $srv['minimumFanSpeed'] ?? 10,
+		];
 	}
 
 } else if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 	// Get POST JSON data from JS fetch()
 	$data = json_decode(file_get_contents('php://input'), true);
+	$serverIndex = isset($data['server']) ? (int)$data['server'] : 0;
+	$serverIndex = max(0, min($serverIndex, count($SERVERS_CONFIG) - 1));
+	$server = $SERVERS_CONFIG[$serverIndex];
 
 	if (isset($data['action']))  // Check if the action key exists
 		if ($data['action'] === 'fans' || $data['action'] === 'presets' || $data['action'] === 'autocontrol')  // Check if the action is valid
 			if ($data['action'] === 'fans' && isset($data['fans'])) {  // Set fans speeds
-				$FANS = get_fans();
+				$FANS = get_fans($server);
+				$minFanSpeed = $server['minimumFanSpeed'] ?? 10;
 
 				if (is_int($data['fans']))  // Example: "fans": 50 - set all fans to 50%
 					$data['fans'] = array_fill_keys(array_keys($FANS), $data['fans']);  // Fill the array with the same speeds
@@ -266,10 +266,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				foreach ($data['fans'] as $fan => $speed) {
 					if (array_key_exists($fan, $FANS)) {  // Check if the fan name is valid
 						$fan_index = array_search($fan, array_keys($FANS));
-						if (($speed >= $MINIMUM_FAN_SPEED && $speed <= 100) && $speed != $FANS[$fan]) {  // Check if the speed is valid and different from the current fan's speed
+						if (($speed >= $minFanSpeed && $speed <= 100) && $speed != $FANS[$fan]) {  // Check if the speed is valid and different from the current fan's speed
 							if (!$connected) {  // Connect to iLO (only once)
-								$ssh_handle = ssh2_connect($ILO_HOST, 22, ["kex" => "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1", "hostkey" => "ssh-rsa,ssh-dss"]);
-								if (!$ssh_handle || !ssh2_auth_password($ssh_handle, $ILO_USERNAME, $ILO_PASSWORD)) {
+								$ssh_handle = ssh2_connect($server['host'], 22, ["kex" => "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1", "hostkey" => "ssh-rsa,ssh-dss"]);
+								if (!$ssh_handle || !ssh2_auth_password($ssh_handle, $server['username'], $server['password'])) {
 									die(json_encode(['error' => 'SSH connection failed']));
 								}
 								$connected = true;
@@ -296,17 +296,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				// Wait until the fans are set
 				if ($updated > 0)
 					do
-						$FANS = get_fans();
+						$FANS = get_fans($server);
 					while ($FANS !== array_merge($FANS, $data['fans']));  // Wait until the fans are updated
 
 				die(json_encode($FANS, JSON_PRETTY_PRINT));
-			} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets.json
+			} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets-{id}.json
+				$id = $server['id'];
 				$raw_presets = json_encode($data['presets'], JSON_PRETTY_PRINT);
-				file_put_contents('presets.json', $raw_presets);
+				file_put_contents("presets-$id.json", $raw_presets);
 				die($raw_presets);
 			} else if ($data['action'] === 'autocontrol' && isset($data['config'])) {  // Save auto-control config
 				header('Content-Type: application/json');
-				die(json_encode(save_auto_control($data['config'])));
+				die(json_encode(save_auto_control($data['config'], $server)));
 			} else
 				die('Invalid request: missing required key.');
 		else
@@ -368,7 +369,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				@apply z-10 py-0.5 px-2 rounded-md select-none absolute max-h-max min-w-max bg-gray-50 border-gray-150 text-gray-800
 							 shadow-md border dark:border-gray-800 dark:bg-gray-850 dark:text-gray-200;
 			}
-			
+
 			/* https://tailwindcss.com/docs/dark-mode#toggling-dark-mode-manually */
 			@custom-variant dark (&:where(.dark, .dark *));
 
@@ -432,7 +433,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 	<main class="p-5 pb-8 sm:px-10 max-w-[60rem] mx-auto">
 		<div class="flex items-center justify-between mb-5 sm:mb-7">
 			<div x-data="{ showTooltip: false }" class="relative" @mouseover.away="showTooltip = false">
-				<a href="https://<?php echo $ILO_HOST; ?>" target="_blank" @mouseenter="showTooltip = !showTooltip">
+				<a :href="'https://' + $store.servers.current.host" target="_blank" @mouseenter="showTooltip = !showTooltip">
 					<img src="./favicon.ico" alt="favicon"
 						class="h-12 w-12 transform transition-transform duration-75 active:scale-90" draggable="false">
 				</a>
@@ -507,6 +508,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 			</div>
 		</div>
 
+		<!-- Server Summary Cards (only when multiple servers) -->
+		<template x-if="$store.servers.list.length > 1">
+			<div class="flex gap-3 overflow-x-auto pb-2 mb-3">
+				<template x-for="(server, i) in $store.servers.list" :key="server.id">
+					<div class="flex-shrink-0 rounded-lg border-2 p-3 cursor-pointer transition-colors min-w-[180px]"
+						:class="$store.servers.summary(i).isAlert
+							? 'border-red-500 bg-red-500/5 dark:bg-red-500/5'
+							: i === $store.servers.active
+								? 'border-emerald-500 bg-emerald-500/5 dark:border-emerald-500 dark:bg-emerald-500/5'
+								: 'dark:border-gray-875 border-gray-175 dark:bg-gray-900/50 bg-gray-50'"
+						@click="$store.servers.active = i">
+						<p class="font-semibold dark:text-white text-black text-sm" x-text="server.name"></p>
+						<p class="text-xs dark:text-gray-500 text-gray-400 mb-2" x-text="$store.servers.summary(i).profileLabel"></p>
+						<p class="text-3xl font-mono font-bold"
+							:class="$store.servers.summary(i).isAlert ? 'text-red-500' : 'dark:text-emerald-400 text-emerald-600'"
+							x-text="$store.servers.summary(i).maxTemp + '°C'"></p>
+						<p class="text-xs dark:text-gray-500 text-gray-400" x-text="$store.servers.summary(i).sensor"></p>
+						<p class="text-xs dark:text-gray-600 text-gray-350 mt-1" x-text="'Fans avg: ' + $store.servers.summary(i).avgFan + '%'"></p>
+					</div>
+				</template>
+			</div>
+		</template>
+
 		<!-- Auto Control Section -->
 		<div class="mt-5 p-4 rounded-lg border-2 transition-colors mb-3"
 			:class="$store.autoControl.config.enabled ? 'dark:border-emerald-500/50 border-emerald-500/50 dark:bg-emerald-500/5 bg-emerald-500/5' : 'dark:border-gray-875 border-gray-175 dark:bg-gray-900/50 bg-gray-50'">
@@ -525,7 +549,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						Start daemon
 					</span>
 				</div>
-				
+
 				<!-- Toggle -->
 				<div class="flex items-center space-x-2">
 					<span class="text-xs font-medium" :class="$store.autoControl.config.enabled ? 'dark:text-gray-500 text-gray-400' : 'dark:text-gray-300 text-gray-700'">Manual</span>
@@ -544,8 +568,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				<div class="flex flex-wrap gap-2 mt-2">
 					<template x-for="(profile, key) in $store.autoControl.config.profiles" :key="key">
 						<button class="px-3 py-1.5 rounded-md text-sm font-medium transition-all"
-							:class="$store.autoControl.config.profile === key 
-								? 'bg-emerald-500 text-white' 
+							:class="$store.autoControl.config.profile === key
+								? 'bg-emerald-500 text-white'
 								: 'dark:bg-gray-800 bg-gray-100 dark:text-gray-300 text-gray-700 dark:hover:bg-gray-750 hover:bg-gray-200'"
 							@click="$store.autoControl.setProfile(key)"
 							x-text="profile.label">
@@ -621,7 +645,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				</div>
 				<div class="flex items-center space-x-2">
 					<!-- Auto-refresh selector -->
-					<select 
+					<select
 						class="input text-xs px-1.5 py-0.5 rounded cursor-pointer"
 						@change="$store.temperatures.setAutoRefresh(parseInt($event.target.value))"
 						:value="$store.temperatures.autoRefreshInterval">
@@ -662,14 +686,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 										x-text="group.avg + '°C'"></span>
 									<span class="text-xs dark:text-gray-600 text-gray-500 ml-1" x-text="'(' + group.min + '-' + group.max + ')'"></span>
 								</div>
-								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" 
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
 									class="w-4 h-4 dark:text-gray-600 text-gray-400 transition-transform duration-200"
 									:class="open ? 'rotate-180' : ''">
 									<path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
 								</svg>
 							</div>
 						</div>
-						
+
 						<!-- Progress bar -->
 						<div class="h-1 dark:bg-gray-800 bg-gray-200">
 							<div class="h-full transition-all duration-300"
@@ -733,7 +757,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 							:class="$store.app.isLoading ? 'dark:!text-gray-200' : ''" x-text="name"></p>
 
 						<!-- Sorry for this -->
-						<input type="range" min="<?php echo $MINIMUM_FAN_SPEED; ?>" max="100"
+						<input type="range" :min="$store.servers.current.minFanSpeed" max="100"
 							class="touch-none w-full flex-1 border appearance-none [&::-webkit-slider-thumb]:transition-colors
 											[&::-webkit-slider-thumb]:duration-75 [&::-webkit-slider-thumb]:appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-emerald-500
 											[&::-webkit-slider-thumb]:w-6 [&::-webkit-slider-thumb]:h-6 sm:[&::-webkit-slider-thumb]:w-5 sm:[&::-webkit-slider-thumb]:h-5
@@ -745,7 +769,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					</div>
 
 					<div x-data="{ originalSpeed: speed }" class="select-none items-center flex flex-row sm:flex-row">
-						<input type="number" min="<?php echo $MINIMUM_FAN_SPEED; ?>" max="100" required
+						<input type="number" :min="$store.servers.current.minFanSpeed" max="100" required
 							class="w-16 sm:ml-3 max-w-max px-1.5 py-0.5 font-mono text-gray-800"
 							:placeholder="originalSpeed" :disabled="$store.app.isLoading" x-model="speed">
 
@@ -834,16 +858,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				}
 			});
 
+			Alpine.store('servers', {
+				list: <?php echo json_encode($ALL_DATA); ?>,
+				active: 0,
+
+				get current() { return this.list[this.active]; },
+
+				summary(i) {
+					const s = this.list[i];
+					const allSensors = s.temperatures.flatMap(g => g.sensors);
+					const hottest = allSensors.reduce(
+						(a, b) => a.reading > b.reading ? a : b,
+						{ reading: 0, name: '—' }
+					);
+					const profile = s.autoControl?.profiles?.[s.autoControl?.profile];
+					const fanValues = Object.values(s.fans);
+					const avgFan = fanValues.length
+						? Math.round(fanValues.reduce((a, b) => a + b, 0) / fanValues.length)
+						: 0;
+					return {
+						maxTemp:      hottest.reading,
+						sensor:       hottest.name,
+						avgFan,
+						profileLabel: profile?.label ?? 'Manual',
+						isAlert:      profile ? hottest.reading >= profile.maxTemp : false,
+					};
+				},
+
+				async refresh(i) {
+					const [tempRes, fanRes] = await Promise.all([
+						fetch(`?api=temperatures&server=${i}`),
+						fetch(`?api=fans&server=${i}`)
+					]);
+					if (tempRes.ok) this.list[i].temperatures = await tempRes.json();
+					if (fanRes.ok)  this.list[i].fans = await fanRes.json();
+				},
+			});
+
 			Alpine.store('fans', {
-				fans: <?php echo json_encode($FANS); ?>,  // Get the fans from the server
+				get fans() { return Alpine.store('servers').current.fans; },
 
 				setSpeed(fan, rawSpeed) {
 					const speed = parseInt(rawSpeed);
+					const minFanSpeed = Alpine.store('servers').current.minFanSpeed;
 
-					if (speed >= <?php echo $MINIMUM_FAN_SPEED; ?> && speed <= 100)
+					if (speed >= minFanSpeed && speed <= 100)
 						if (Alpine.store('app').editAll)
-							for (const fan in this.fans)
-								this.fans[fan] = speed;
+							for (const f in this.fans)
+								this.fans[f] = speed;
 						else
 							this.fans[fan] = speed;
 
@@ -852,7 +914,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 			});
 
 			Alpine.store('temperatures', {
-				temperatures: <?php echo json_encode($TEMPERATURES); ?>,
+				get temperatures() { return Alpine.store('servers').current.temperatures; },
 				isLoading: false,
 				lastRefresh: null,
 				autoRefreshInterval: localStorage.getItem('tempRefreshInterval') || '0',
@@ -861,17 +923,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				async refresh() {
 					this.isLoading = true;
 					try {
-						const [tempRes, fanRes] = await Promise.all([
-							fetch('<?php echo $_SERVER['PHP_SELF']; ?>?api=temperatures'),
-							fetch('<?php echo $_SERVER['PHP_SELF']; ?>?api=fans')
-						]);
-						if (tempRes.ok) {
-							this.temperatures = await tempRes.json();
-							this.lastRefresh = new Date().toLocaleTimeString();
-						}
-						if (fanRes.ok) {
-							Alpine.store('fans').fans = await fanRes.json();
-						}
+						const i = Alpine.store('servers').active;
+						await Alpine.store('servers').refresh(i);
+						this.lastRefresh = new Date().toLocaleTimeString();
 					} catch (e) {
 						console.error('Failed to refresh:', e);
 					}
@@ -881,12 +935,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				setAutoRefresh(seconds) {
 					this.autoRefreshInterval = seconds;
 					localStorage.setItem('tempRefreshInterval', seconds);
-					
+
 					if (this.intervalId) {
 						clearInterval(this.intervalId);
 						this.intervalId = null;
 					}
-					
+
 					if (seconds > 0) {
 						this.intervalId = setInterval(() => this.refresh(), seconds * 1000);
 					}
@@ -901,16 +955,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 			});
 
 			Alpine.store('autoControl', {
-				config: <?php echo json_encode($AUTO_CONTROL); ?>,
+				get config() { return Alpine.store('servers').current.autoControl; },
 
 				async save() {
+					const i = Alpine.store('servers').active;
 					try {
 						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
 							method: 'POST',
-							body: JSON.stringify({ action: 'autocontrol', config: this.config }),
+							body: JSON.stringify({ action: 'autocontrol', config: this.config, server: i }),
 						});
 						if (res.ok) {
-							this.config = await res.json();
+							Alpine.store('servers').list[i].autoControl = await res.json();
 						}
 					} catch (e) {
 						console.error('Failed to save auto-control config:', e);
@@ -928,10 +983,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				},
 
 				async refresh() {
+					const i = Alpine.store('servers').active;
 					try {
-						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>?api=autocontrol');
+						const res = await fetch(`<?php echo $_SERVER['PHP_SELF']; ?>?api=autocontrol&server=${i}`);
 						if (res.ok) {
-							this.config = await res.json();
+							Alpine.store('servers').list[i].autoControl = await res.json();
 						}
 					} catch (e) {
 						console.error('Failed to refresh auto-control config:', e);
@@ -941,17 +997,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 			Alpine.store('presets', {
 				currentPreset: null,
-				presets: <?php echo json_encode($PRESETS); ?>,  // Get the presets from the server
+				get presets() { return Alpine.store('servers').current.presets; },
 
 				async updatePresets() {
+					const i = Alpine.store('servers').active;
 					const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
 						method: 'POST',
-						body: JSON.stringify({ action: 'presets', presets: this.presets }),
+						body: JSON.stringify({ action: 'presets', presets: this.presets, server: i }),
 					});
 
-					if (res.ok) {  // Get the updated presets back from the server
-						const updatedPresets = await res.json();
-						this.presets = updatedPresets;
+					if (res.ok) {
+						Alpine.store('servers').list[i].presets = await res.json();
 					}
 				},
 
@@ -988,7 +1044,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						this.presets.push({ name: name.trim(), speeds });
 						this.currentPreset = this.presets.length - 1;
 
-						this.updatePresets();  // Save the presets in the presets.json file
+						this.updatePresets();  // Save the presets in the presets-{id}.json file
 					}
 				},
 
@@ -998,7 +1054,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						this.presets.splice(index, 1);
 						this.currentPreset = null;
 
-						this.updatePresets();  // Save the presets in the presets.json file
+						this.updatePresets();  // Save the presets in the presets-{id}.json file
 					}
 				},
 
@@ -1028,19 +1084,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				async applySpeeds() {
 					this.isLoading = true;
 					this.requestTime = null;
-					currentTimestamp = new Date().getTime();
-
+					const currentTimestamp = new Date().getTime();
+					const i = Alpine.store('servers').active;
 					const fans = Alpine.store('fans').fans;
 
 					const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
 						method: 'POST',
-						body: JSON.stringify({ action: 'fans', fans }),
+						body: JSON.stringify({ action: 'fans', fans, server: i }),
 					});
 
 					if (res.ok) {
-						const updatedFans = await res.json();
-						Alpine.store('fans').fans = updatedFans;
-
+						Alpine.store('servers').list[i].fans = await res.json();
 						this.requestTime = new Date().getTime() - currentTimestamp;
 					}
 
