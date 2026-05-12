@@ -51,8 +51,11 @@ function get_fans()
 
 	if ($raw_ilo_data) {  // If the request was successful
 		$fans = [];
-		foreach (json_decode($raw_ilo_data, true)['Fans'] as $fan)
-			$fans[$fan['FanName']] = $fan['CurrentReading'];
+		$data = json_decode($raw_ilo_data, true);
+		if (isset($data['Fans'])) {
+			foreach ($data['Fans'] as $fan)
+				$fans[$fan['FanName']] = $fan['CurrentReading'];
+		}
 	}
 
 	return $fans ?? [];
