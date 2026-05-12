@@ -508,42 +508,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 			</div>
 		</div>
 
-		<!-- Server Summary Cards + Tab Bar (only when multiple servers) -->
+		<!-- Server Summary Cards (only when multiple servers) -->
 		<template x-if="$store.servers.list.length > 1">
-			<div>
-				<!-- Summary cards row -->
-				<div class="flex gap-3 overflow-x-auto pb-2 mb-3">
-					<template x-for="(server, i) in $store.servers.list" :key="server.id">
-						<div class="flex-shrink-0 rounded-lg border-2 p-3 cursor-pointer transition-colors min-w-[180px]"
-							:class="$store.servers.summary(i).isAlert
-								? 'border-red-500 bg-red-500/5 dark:bg-red-500/5'
-								: i === $store.servers.active
-									? 'border-emerald-500 bg-emerald-500/5 dark:border-emerald-500 dark:bg-emerald-500/5'
-									: 'dark:border-gray-875 border-gray-175 dark:bg-gray-900/50 bg-gray-50'"
-							@click="$store.servers.active = i">
-							<p class="font-semibold dark:text-white text-black text-sm" x-text="server.name"></p>
-							<p class="text-xs dark:text-gray-500 text-gray-400 mb-2" x-text="$store.servers.summary(i).profileLabel"></p>
-							<p class="text-3xl font-mono font-bold"
-								:class="$store.servers.summary(i).isAlert ? 'text-red-500' : 'dark:text-emerald-400 text-emerald-600'"
-								x-text="$store.servers.summary(i).maxTemp + '°C'"></p>
-							<p class="text-xs dark:text-gray-500 text-gray-400" x-text="$store.servers.summary(i).sensor"></p>
-							<p class="text-xs dark:text-gray-600 text-gray-350 mt-1" x-text="'Fans avg: ' + $store.servers.summary(i).avgFan + '%'"></p>
-						</div>
-					</template>
-				</div>
-
-				<!-- Tab bar -->
-				<div class="flex gap-2 mb-5">
-					<template x-for="(server, i) in $store.servers.list" :key="server.id">
-						<button class="px-4 py-1.5 rounded-full text-sm font-medium transition-all"
-							:class="i === $store.servers.active
-								? 'bg-emerald-500 text-white'
-								: 'dark:bg-gray-900 bg-gray-100 dark:text-gray-400 text-gray-600 dark:hover:bg-gray-875 hover:bg-gray-200'"
-							@click="$store.servers.active = i"
-							x-text="server.name">
-						</button>
-					</template>
-				</div>
+			<div class="flex gap-3 overflow-x-auto pb-2 mb-3">
+				<template x-for="(server, i) in $store.servers.list" :key="server.id">
+					<div class="flex-shrink-0 rounded-lg border-2 p-3 cursor-pointer transition-colors min-w-[180px]"
+						:class="$store.servers.summary(i).isAlert
+							? 'border-red-500 bg-red-500/5 dark:bg-red-500/5'
+							: i === $store.servers.active
+								? 'border-emerald-500 bg-emerald-500/5 dark:border-emerald-500 dark:bg-emerald-500/5'
+								: 'dark:border-gray-875 border-gray-175 dark:bg-gray-900/50 bg-gray-50'"
+						@click="$store.servers.active = i">
+						<p class="font-semibold dark:text-white text-black text-sm" x-text="server.name"></p>
+						<p class="text-xs dark:text-gray-500 text-gray-400 mb-2" x-text="$store.servers.summary(i).profileLabel"></p>
+						<p class="text-3xl font-mono font-bold"
+							:class="$store.servers.summary(i).isAlert ? 'text-red-500' : 'dark:text-emerald-400 text-emerald-600'"
+							x-text="$store.servers.summary(i).maxTemp + '°C'"></p>
+						<p class="text-xs dark:text-gray-500 text-gray-400" x-text="$store.servers.summary(i).sensor"></p>
+						<p class="text-xs dark:text-gray-600 text-gray-350 mt-1" x-text="'Fans avg: ' + $store.servers.summary(i).avgFan + '%'"></p>
+					</div>
+				</template>
 			</div>
 		</template>
 
