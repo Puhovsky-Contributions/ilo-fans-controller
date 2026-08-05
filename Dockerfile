@@ -21,6 +21,7 @@ WORKDIR /var/www/html
 COPY favicon.ico ./
 COPY ilo-fans-controller.php ./index.php
 COPY fan-daemon.php ./
+COPY lib/ ./lib/
 COPY auto-control.json ./
 COPY config.inc.php.env ./config.inc.php
 
@@ -36,9 +37,11 @@ ENV ILO_HOST=""
 ENV ILO_USERNAME=""
 ENV ILO_PASSWORD=""
 ENV MINIMUM_FAN_SPEED=10
+ENV PROXMOX_HOST=""
+ENV PROXMOX_NODE=""
+ENV PROXMOX_PORT=8006
+ENV PROXMOX_API_TOKEN=""
 ENV AUTO_DAEMON=true
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost/ || exit 1
 

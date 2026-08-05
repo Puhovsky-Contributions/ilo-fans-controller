@@ -31,6 +31,18 @@
 - **Environment variables** for all configuration
 - **Health checks** built-in
 - **Swarm-ready** docker-compose.yml
+- **GHCR build** on push to `main` (`.github/workflows/build-and-push.yml`)
+
+### 💾 Proxmox disk temperatures (optional)
+- Fan daemon + UI use **real drive temps** from a Proxmox node (API token)
+- `disks/list` → one `disks/smart` call per disk (no single bulk temp API)
+- Configure via env (`PROXMOX_HOST`, `PROXMOX_NODE`, `PROXMOX_PORT`, `PROXMOX_API_TOKEN`) or per-server fields in `/data/servers.json`
+- Fan daemon: `fanControlSources` in `auto-control.json` (see `__doc_fanControlSources` in that file and `lib/fan-control-sources.php`):
+  - **Proxmox:** `pve:cpu`, `pve:disks`
+  - **iLO zones:** `ilo:all`, `ilo:ambient`, `ilo:cpu`, `ilo:memory`, `ilo:vr`, `ilo:storage`, `ilo:power`, `ilo:chipset`, `ilo:pci`, `ilo:other`
+  - Default skips `ilo:cpu` when iLO CPU reads stuck (~40°C); uses `pve:cpu` + DIMM/VR/PCI + disk SMART
+  - Daemon emits **one JSON line per tick** to stdout (for Loki/ELK/etc.)
+- Token format: `user@pam!tokenname=uuid` (role needs `Sys.Audit` on node, disk read)
 
 ### ⚡ Performance Optimizations
 - **Combined SSH commands** for faster fan speed application
@@ -49,6 +61,9 @@ docker run -d --name ilo-fans-controller --restart always \
     -e ILO_USERNAME='Administrator' \
     -e ILO_PASSWORD='your-password' \
     -e AUTO_DAEMON='true' \
+    -e PROXMOX_HOST='pve.example.com' \
+    -e PROXMOX_NODE='waw01-pve' \
+    -e PROXMOX_API_TOKEN='user@pam!ifc=secret-uuid' \
     harbor.ics.fr/ics/ilo-fans-controller:latest
 ```
 

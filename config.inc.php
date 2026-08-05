@@ -22,6 +22,10 @@ $ILO_PASSWORD = 'your-ilo-password';  // Ex. AdministratorPassword1234
 $MINIMUM_FAN_SPEED = 10;
 $AUTO_DAEMON = true;
 
+/*
+  PROXMOX (optional) — disk temps via API token; see .env.example / servers.json
+*/
+
 function get_servers() {
     $serversFile = '/data/servers.json';
     if (file_exists($serversFile)) {

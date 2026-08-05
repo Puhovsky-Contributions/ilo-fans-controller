@@ -5,7 +5,11 @@
     "host": "10.10.9.110",
     "username": "admin",
     "password": "secret",
-    "minimumFanSpeed": 10
+    "minimumFanSpeed": 10,
+    "proxmoxHost": "10.10.9.50",
+    "proxmoxNode": "waw01-pve",
+    "proxmoxPort": 8006,
+    "proxmoxApiToken": "user@pam!ifc=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   },
   {
     "id": "server2",

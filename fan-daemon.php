@@ -10,6 +10,10 @@
  */
 
 require 'config.inc.php';
+require __DIR__ . '/lib/proxmox-disks.php';
+require __DIR__ . '/lib/ilo-zones.php';
+require __DIR__ . '/lib/ilo-thermal.php';
+require __DIR__ . '/lib/fan-control-sources.php';
 
 $serverId = $argv[1] ?? 'default';
 
@@ -66,61 +70,6 @@ function get_config()
         return null;
     }
     return json_decode(file_get_contents(CONFIG_FILE), true);
-}
-
-function get_temperatures()
-{
-    global $serverConfig;
-
-    $curl_handle = curl_init("https://{$serverConfig['host']}/redfish/v1/chassis/1/Thermal");
-    curl_setopt($curl_handle, CURLOPT_USERPWD, "{$serverConfig['username']}:{$serverConfig['password']}");
-    curl_setopt($curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_setopt($curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
-    curl_setopt($curl_handle, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($curl_handle, CURLOPT_TIMEOUT, 10);
-
-    $raw_ilo_data = curl_exec($curl_handle);
-
-    if (!$raw_ilo_data) {
-        return null;
-    }
-
-    $data = json_decode($raw_ilo_data, true);
-    $cpuTemps = [];
-    $ambientTemp = null;
-    $fanCount = 0;
-
-    if (isset($data['Temperatures'])) {
-        foreach ($data['Temperatures'] as $temp) {
-            $name = strtolower($temp['Name'] ?? '');
-            $reading = $temp['ReadingCelsius'] ?? null;
-            $status = $temp['Status']['State'] ?? 'Unknown';
-
-            if ($reading !== null && $status === 'Enabled') {
-                // CPU temperatures for fan control
-                if (strpos($name, 'cpu') !== false) {
-                    $cpuTemps[] = $reading;
-                }
-                // Ambient/Inlet temperature for safety override
-                if (strpos($name, 'inlet') !== false || strpos($name, 'ambient') !== false) {
-                    $ambientTemp = $reading;
-                }
-            }
-        }
-    }
-
-    // Count active fans
-    if (isset($data['Fans'])) {
-        foreach ($data['Fans'] as $fan) {
-            $status = $fan['Status']['State'] ?? 'Unknown';
-            if ($status === 'Enabled') {
-                $fanCount++;
-            }
-        }
-    }
-
-    return ['cpu' => $cpuTemps, 'ambient' => $ambientTemp, 'fanCount' => $fanCount];
 }
 
 function calculate_fan_speed($temps, $profile)
@@ -184,7 +133,7 @@ function set_fan_speed($speed, $fanCount)
 }
 
 // Main loop
-echo "=== Fan Control Daemon Started ===\n";
+echo "=== Fan Control Daemon Started (iLO + Proxmox disks) ===\n";
 echo "Server: $serverId ({$serverConfig['host']})\n";
 echo "PID: " . getmypid() . "\n";
 echo "Config file: " . CONFIG_FILE . "\n\n";
@@ -197,14 +146,29 @@ while (true) {
     $config = get_config();
 
     if (!$config) {
+        fan_daemon_log_json([
+            'serverId' => $serverId,
+            'iloHost' => $serverConfig['host'],
+            'status' => 'waiting',
+            'error' => 'config_missing',
+            'configFile' => CONFIG_FILE,
+        ]);
         echo "[WARN] Config file not found, waiting...\n";
         sleep(10);
         continue;
     }
 
     if (!$config['enabled']) {
+        fan_daemon_log_json([
+            'serverId' => $serverId,
+            'iloHost' => $serverConfig['host'],
+            'status' => 'idle',
+            'autoEnabled' => false,
+            'profile' => ['key' => $config['profile'] ?? null],
+            'checkIntervalSec' => $config['checkInterval'] ?? 30,
+        ]);
         if ($lastSpeed !== null) {
-            echo "[INFO] Auto-control disabled, switching to idle\n";
+            echo "[INFO] Auto-control disabled\n";
             $lastSpeed = null;
         }
         sleep($config['checkInterval'] ?? 30);
@@ -213,49 +177,112 @@ while (true) {
 
     $profileName = $config['profile'] ?? 'normal';
     $profile = $config['profiles'][$profileName] ?? $config['profiles']['normal'];
+    $profileForced = false;
+    $originalProfileName = $profileName;
 
-    // Get temperatures
-    $tempData = get_temperatures();
-    if ($tempData === null) {
-        echo "[WARN] Could not fetch temperatures\n";
+    $iloData = fetch_ilo_thermal($serverConfig);
+    if ($iloData === null) {
+        fan_daemon_log_json([
+            'serverId' => $serverId,
+            'iloHost' => $serverConfig['host'],
+            'status' => 'error',
+            'error' => 'ilo_thermal_unavailable',
+            'autoEnabled' => true,
+        ]);
+        echo "[WARN] Could not fetch iLO temperatures\n";
         sleep($config['checkInterval'] ?? 30);
         continue;
     }
 
-    $cpuTemps = $tempData['cpu'];
-    $ambientTemp = $tempData['ambient'];
-    $fanCount = $tempData['fanCount'] ?: 8; // Default to 8 if not detected
+    $iloZones = $iloData['zones'];
+    $ambientTemp = $iloData['ambient'];
+    $fanCount = $iloData['fanCount'] ?: 8;
+
+    $diskReadings = get_proxmox_disk_temperatures($serverConfig);
+    $pveCpuReadings = get_proxmox_host_cpu_temperatures($serverConfig);
 
     // Safety: Force Normal profile if ambient > 40°C
-    if ($ambientTemp !== null && $ambientTemp > 40 && $profileName === 'silence') {
-        echo "[" . date('H:i:s') . "] SAFETY: Ambient {$ambientTemp}°C > 40°C, forcing Normal profile\n";
+    if ($ambientTemp !== null && $ambientTemp > 40 && in_array($profileName, ['silence', 'silent'], true)) {
+        $profileForced = true;
         $profile = $config['profiles']['normal'];
         $profileName = 'normal (forced)';
-    } else {
-        echo "[" . date('H:i:s') . "] Profile: {$profile['label']}";
-        if ($ambientTemp !== null) {
-            echo " | Ambient: {$ambientTemp}°C";
-        }
-        echo " | Fans: {$fanCount}\n";
     }
 
-    $maxTemp = !empty($cpuTemps) ? max($cpuTemps) : 0;
-    echo "  Max CPU temp: {$maxTemp}°C\n";
-
-    // Calculate speed
-    $speed = calculate_fan_speed($cpuTemps, $profile);
-    echo "  Calculated speed: {$speed}%\n";
-
-    // Hysteresis: only apply if change is > 3%
+    $fanCalc = build_fan_control_temps_detailed($config, $iloZones, $pveCpuReadings, $diskReadings);
+    $allTemps = $fanCalc['temps'];
+    $speed = calculate_fan_speed($allTemps, $profile);
+    $previousSpeedPct = $lastSpeed;
     $speedDiff = abs($speed - ($lastSpeed ?? 0));
-    if ($lastSpeed === null || $speedDiff > 3) {
-        echo "  Applying new fan speed (diff: {$speedDiff}%)...\n";
-        if (set_fan_speed($speed, $fanCount)) {
-            echo "  [OK] Fans set to {$speed}%\n";
+    $shouldApply = $lastSpeed === null || $speedDiff > 3;
+    $applyOk = null;
+
+    if ($shouldApply) {
+        $applyOk = set_fan_speed($speed, $fanCount);
+        if ($applyOk) {
             $lastSpeed = $speed;
         }
-    } else {
-        echo "  No change (diff: {$speedDiff}% < 3%)\n";
+    }
+
+    $pveCfg = get_proxmox_config($serverConfig);
+
+    fan_daemon_log_json([
+        'serverId' => $serverId,
+        'iloHost' => $serverConfig['host'],
+        'proxmox' => $pveCfg !== null ? [
+            'host' => $pveCfg['host'],
+            'node' => $pveCfg['node'],
+            'port' => $pveCfg['port'],
+        ] : null,
+        'status' => 'ok',
+        'autoEnabled' => true,
+        'profile' => [
+            'key' => $originalProfileName,
+            'effectiveKey' => $profileName,
+            'label' => $profile['label'],
+            'forced' => $profileForced,
+            'minSpeed' => $profile['minSpeed'],
+            'maxSpeed' => $profile['maxSpeed'],
+            'targetTemp' => $profile['targetTemp'],
+            'maxTemp' => $profile['maxTemp'],
+        ],
+        'fanControlSources' => get_fan_control_sources($config),
+        'ilo' => [
+            'ambientC' => $ambientTemp,
+            'fanCount' => $fanCount,
+            'zones' => $iloZones,
+        ],
+        'pve' => [
+            'cpu' => $pveCpuReadings,
+            'disks' => $diskReadings,
+        ],
+        'fanCalc' => [
+            'bySource' => $fanCalc['bySource'],
+            'tempsUsed' => $allTemps,
+            'maxTempC' => $allTemps !== [] ? max($allTemps) : null,
+            'speedPct' => $speed,
+            'previousSpeedPct' => $previousSpeedPct,
+            'hysteresisDiffPct' => $speedDiff,
+            'applied' => $shouldApply && $applyOk === true,
+            'applyAttempted' => $shouldApply,
+            'applyOk' => $applyOk,
+        ],
+        'safety' => [
+            'ambientForceNormal' => $profileForced,
+            'ambientThresholdC' => 40,
+        ],
+        'checkIntervalSec' => $config['checkInterval'] ?? 30,
+    ]);
+
+    if ($profileForced) {
+        echo "[" . date('H:i:s') . "] SAFETY: Ambient {$ambientTemp}°C > 40°C, forcing Normal profile\n";
+    }
+
+    if ($shouldApply) {
+        if ($applyOk) {
+            echo "[" . date('H:i:s') . "] Fans -> {$speed}% (max temp " . ($allTemps !== [] ? max($allTemps) : '?') . "°C)\n";
+        } else {
+            echo "[" . date('H:i:s') . "] Failed to set fans to {$speed}%\n";
+        }
     }
 
     sleep($config['checkInterval'] ?? 30);

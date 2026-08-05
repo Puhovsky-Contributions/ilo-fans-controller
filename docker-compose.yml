@@ -9,6 +9,10 @@ services:
       ILO_PASSWORD: '${ILO_PASSWORD}'
       MINIMUM_FAN_SPEED: '${MINIMUM_FAN_SPEED}'
       AUTO_DAEMON: '${AUTO_DAEMON}'
+      PROXMOX_HOST: '${PROXMOX_HOST:-}'
+      PROXMOX_NODE: '${PROXMOX_NODE:-}'
+      PROXMOX_PORT: '${PROXMOX_PORT:-8006}'
+      PROXMOX_API_TOKEN: '${PROXMOX_API_TOKEN:-}'
     volumes:
       - ilo-fans-data:/data
     restart: unless-stopped          # plain Docker equivalent

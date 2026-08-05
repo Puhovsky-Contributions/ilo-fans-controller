@@ -11,9 +11,9 @@
         },
         "normal": {
             "label": "Normal",
-            "minSpeed": 20,
+            "minSpeed": 15,
             "maxSpeed": 70,
-            "targetTemp": 50,
+            "targetTemp": 40,
             "maxTemp": 65
         },
         "turbo": {
@@ -24,5 +24,13 @@
             "maxTemp": 55
         }
     },
-    "checkInterval": 20
+    "checkInterval": 20,
+    "__doc_fanControlSources": "fanControlSources tokens: pve:cpu | pve:disks | ilo:all | ilo:ambient | ilo:cpu | ilo:memory | ilo:vr | ilo:storage | ilo:power | ilo:chipset | ilo:pci | ilo:other. See lib/fan-control-sources.php. iLO CPU often stuck ~40C — prefer pve:cpu + ilo:memory/vr/pci, not ilo:cpu.",
+    "fanControlSources": [
+        "pve:cpu",
+        "pve:disks",
+        "ilo:memory",
+        "ilo:vr",
+        "ilo:pci"
+    ]
 }
