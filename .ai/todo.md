@@ -25,6 +25,16 @@
 - [ ] Auto-control ON → `fan-daemon-{custom-id}.pid`, UI Daemon active
 - [ ] curl POST fans completes in < 5s
 
+## Fan apply logging (fan-daemon)
+- [x] stdout flush + `fan_speed_applied` / `fan_speed_apply_failed` events
+- [x] `set_fan_speed` structured errors; tick `holdingSpeedPct` + `skipReason`
+- [x] README log section
+- [ ] `docker compose up` → auto ON → `grep -E 'fan_speed_applied|APPLY fans'` on first tick
+- [ ] Stable temps → ticks with `skipReason:hysteresis`, no `fan_speed_applied`
+- [ ] Heat / profile change >3% → `fan_speed_applied` again
+- [ ] Bad iLO host → `fan_speed_apply_failed` + `applyOk:false`
+- [ ] Logs appear immediately (no multi-minute batching)
+
 ## Review
 
 Supervisord now mirrors `servers.json` ids at container start only (no hot-reload without restart).

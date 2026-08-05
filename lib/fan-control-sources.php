@@ -128,4 +128,21 @@ function fan_daemon_log_json(array $payload): void
     $payload['ts'] = date('c');
     $payload['event'] = $payload['event'] ?? 'fan_control_tick';
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
+    if (defined('STDOUT') && is_resource(STDOUT)) {
+        @fflush(STDOUT);
+    }
+}
+
+function fan_daemon_log_event(string $event, array $payload): void
+{
+    $payload['event'] = $event;
+    fan_daemon_log_json($payload);
+}
+
+function fan_daemon_stdout_line(string $line): void
+{
+    echo $line;
+    if (defined('STDOUT') && is_resource(STDOUT)) {
+        @fflush(STDOUT);
+    }
 }

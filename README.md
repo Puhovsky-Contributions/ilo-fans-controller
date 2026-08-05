@@ -43,7 +43,7 @@
   - **Proxmox:** `pve:cpu`, `pve:disks`
   - **iLO zones:** `ilo:all`, `ilo:ambient`, `ilo:cpu`, `ilo:memory`, `ilo:vr`, `ilo:storage`, `ilo:power`, `ilo:chipset`, `ilo:pci`, `ilo:other`
   - Default skips `ilo:cpu` when iLO CPU reads stuck (~40°C); uses `pve:cpu` + DIMM/VR/PCI + disk SMART
-  - Daemon emits **one JSON line per tick** to stdout (for Loki/ELK/etc.)
+  - Daemon logs to stdout: **one `fan_control_tick` JSON line per interval**, plus **`fan_speed_applied`** or **`fan_speed_apply_failed`** only when SSH apply runs (see [Fan daemon logs](#-fan-daemon-logs) below)
 - **Proxmox API token** (`pve:disks`): `disks/list` + `disks/smart` — **PVEAuditor** on the node is usually enough
 - **`pve:cpu`**: host `coretemp` via **SSH** `sensors` on the PVE host — `/nodes/.../execute` is *not* for shell commands ([Proxmox forum](https://forum.proxmox.com/threads/proxmox-execute-command.26030/#post-130467))
 - Set `PROXMOX_SSH_USER` / `PROXMOX_SSH_PASSWORD` (or `proxmoxSsh*` in `servers.json`); optional `PROXMOX_SSH_HOST` if SSH differs from API host
@@ -178,6 +178,36 @@ The daemon uses profiles to determine fan speeds based on CPU temperatures:
   "checkInterval": 20
 }
 ```
+
+---
+
+## 📋 Fan daemon logs
+
+Stdout is line-delimited JSON (Loki/ELK friendly). Stdout is flushed after each line so Docker/supervisord show logs immediately.
+
+| Event | When |
+|-------|------|
+| `fan_control_tick` | Every check interval while auto-control is enabled |
+| `fan_speed_applied` | SSH fan apply succeeded (second line, same tick) |
+| `fan_speed_apply_failed` | SSH apply attempted but failed |
+
+**Hysteresis:** fan speed is applied only on the first tick or when the calculated speed differs from the held speed by **more than 3%**. Between applies, ticks still run with `fanCalc.speedPct` (calculated) and `fanCalc.holdingSpeedPct` (last applied); `fanCalc.skipReason` is `hysteresis` when no SSH apply ran.
+
+Human-readable apply lines (same tick as the matching JSON event):
+
+```
+[12:34:56] APPLY fans=45% pwm=115 (was none%, max 52°C)
+[12:34:56] APPLY FAILED fans=45%: ssh_connect_failed
+```
+
+**Examples:**
+
+```bash
+docker compose logs -f 2>&1 | grep fan_speed_applied
+docker compose logs -f 2>&1 | grep -E 'fan_speed_applied|APPLY fans'
+```
+
+Tick payload fields (subset): `fanCalc.applied`, `fanCalc.applyAttempted`, `fanCalc.applyOk`, `fanCalc.skipReason`.
 
 ---
 

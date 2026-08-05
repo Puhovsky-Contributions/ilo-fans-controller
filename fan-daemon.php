@@ -15,6 +15,11 @@ require __DIR__ . '/lib/ilo-zones.php';
 require __DIR__ . '/lib/ilo-thermal.php';
 require __DIR__ . '/lib/fan-control-sources.php';
 
+@ini_set('output_buffering', 'off');
+if (defined('STDOUT') && is_resource(STDOUT)) {
+    @stream_set_write_buffer(STDOUT, 0);
+}
+
 $requestedId = isset($argv[1]) ? (string) $argv[1] : null;
 $serverId = $requestedId ?? 'default';
 
@@ -132,18 +137,37 @@ function calculate_fan_speed($temps, $profile)
     }
 }
 
+/**
+ * @return array{ok: bool, error: ?string, speedPct: int, pwm: int, fanCount: int}
+ */
 function set_fan_speed($speed, $fanCount)
 {
     global $serverConfig;
 
     $minFanSpeed = $serverConfig['minimumFanSpeed'] ?? 10;
-    $speed = max($minFanSpeed, min(100, $speed));
+    $speed = max($minFanSpeed, min(100, (int) $speed));
     $pwm = (int) ceil($speed / 100 * 255);
+    $fanCount = (int) $fanCount;
+
+    $result = [
+        'ok' => false,
+        'error' => null,
+        'speedPct' => $speed,
+        'pwm' => $pwm,
+        'fanCount' => $fanCount,
+    ];
 
     try {
         $ssh = ssh2_connect($serverConfig['host'], 22, ["kex" => "diffie-hellman-group14-sha1,diffie-hellman-group1-sha1", "hostkey" => "ssh-rsa,ssh-dss"]);
-        if (!$ssh || !ssh2_auth_password($ssh, $serverConfig['username'], $serverConfig['password'])) {
-            return false;
+        if (!$ssh) {
+            $result['error'] = 'ssh_connect_failed';
+
+            return $result;
+        }
+        if (!ssh2_auth_password($ssh, $serverConfig['username'], $serverConfig['password'])) {
+            $result['error'] = 'ssh_auth_failed';
+
+            return $result;
         }
 
         // Loop only on detected fans count
@@ -162,10 +186,14 @@ function set_fan_speed($speed, $fanCount)
             usleep(50000);
         }
 
-        return true;
+        $result['ok'] = true;
+
+        return $result;
     } catch (Exception $e) {
         echo "  [ERROR] " . $e->getMessage() . "\n";
-        return false;
+        $result['error'] = 'ssh_exec_failed';
+
+        return $result;
     }
 }
 
@@ -253,12 +281,43 @@ while (true) {
     $speedDiff = abs($speed - ($lastSpeed ?? 0));
     $shouldApply = $lastSpeed === null || $speedDiff > 3;
     $applyOk = null;
+    $applyResult = null;
+    $maxTempC = $allTemps !== [] ? max($allTemps) : null;
 
     if ($shouldApply) {
-        $applyOk = set_fan_speed($speed, $fanCount);
+        $applyResult = set_fan_speed($speed, $fanCount);
+        $applyOk = $applyResult['ok'];
         if ($applyOk) {
             $lastSpeed = $speed;
+            fan_daemon_log_event('fan_speed_applied', [
+                'serverId' => $serverId,
+                'iloHost' => $serverConfig['host'],
+                'speedPct' => $applyResult['speedPct'],
+                'pwm' => $applyResult['pwm'],
+                'previousSpeedPct' => $previousSpeedPct,
+                'fanCount' => $applyResult['fanCount'],
+                'maxTempC' => $maxTempC,
+            ]);
+            $was = $previousSpeedPct === null ? 'none' : (string) $previousSpeedPct;
+            $maxLabel = $maxTempC === null ? '?' : (string) $maxTempC;
+            fan_daemon_stdout_line('[' . date('H:i:s') . "] APPLY fans={$applyResult['speedPct']}% pwm={$applyResult['pwm']} (was {$was}%, max {$maxLabel}°C)\n");
+        } else {
+            fan_daemon_log_event('fan_speed_apply_failed', [
+                'serverId' => $serverId,
+                'iloHost' => $serverConfig['host'],
+                'error' => $applyResult['error'] ?? 'unknown',
+                'speedPct' => $applyResult['speedPct'],
+                'pwm' => $applyResult['pwm'],
+            ]);
+            fan_daemon_stdout_line('[' . date('H:i:s') . '] APPLY FAILED fans=' . $applyResult['speedPct'] . '%: ' . ($applyResult['error'] ?? 'unknown') . "\n");
         }
+    }
+
+    $skipReason = null;
+    if (!$shouldApply) {
+        $skipReason = 'hysteresis';
+    } elseif ($applyOk === false) {
+        $skipReason = 'apply_failed';
     }
 
     $pveCfg = get_proxmox_config($serverConfig);
@@ -302,10 +361,12 @@ while (true) {
         'fanCalc' => [
             'bySource' => $fanCalc['bySource'],
             'tempsUsed' => $allTemps,
-            'maxTempC' => $allTemps !== [] ? max($allTemps) : null,
+            'maxTempC' => $maxTempC,
             'speedPct' => $speed,
+            'holdingSpeedPct' => $lastSpeed,
             'previousSpeedPct' => $previousSpeedPct,
             'hysteresisDiffPct' => $speedDiff,
+            'skipReason' => $skipReason,
             'applied' => $shouldApply && $applyOk === true,
             'applyAttempted' => $shouldApply,
             'applyOk' => $applyOk,
@@ -323,14 +384,6 @@ while (true) {
 
     if ($profileForced) {
         echo "[" . date('H:i:s') . "] SAFETY: Ambient {$ambientTemp}°C > 40°C, forcing Normal profile\n";
-    }
-
-    if ($shouldApply) {
-        if ($applyOk) {
-            echo "[" . date('H:i:s') . "] Fans -> {$speed}% (max temp " . ($allTemps !== [] ? max($allTemps) : '?') . "°C)\n";
-        } else {
-            echo "[" . date('H:i:s') . "] Failed to set fans to {$speed}%\n";
-        }
     }
 
     sleep($config['checkInterval'] ?? 30);
