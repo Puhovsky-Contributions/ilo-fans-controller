@@ -1,125 +1,114 @@
 <?php
 
 /**
- * Proxmox node disk temperatures via API token.
- * List: GET /nodes/{node}/disks/list — no temperature field.
- * Per disk: GET /nodes/{node}/disks/smart?disk={devpath}
+ * Proxmox host temperatures via ilo-fans-agent-pve HTTP agent.
+ * GET /v1/thermal with Bearer token — cpu[] and disks[] (IFC-compatible shapes).
  */
 
 function get_proxmox_config(?array $server = null): ?array
 {
-    $host = trim($server['proxmoxHost'] ?? getenv('PROXMOX_HOST') ?: '');
-    $node = trim($server['proxmoxNode'] ?? getenv('PROXMOX_NODE') ?: '');
-    $token = trim($server['proxmoxApiToken'] ?? getenv('PROXMOX_API_TOKEN') ?: '');
+    $url = trim($server['proxmoxAgentUrl'] ?? getenv('PROXMOX_AGENT_URL') ?: '');
+    $token = trim($server['proxmoxAgentToken'] ?? getenv('PROXMOX_AGENT_TOKEN') ?: '');
 
-    if ($host === '' || $node === '' || $token === '') {
+    if ($url === '' || $token === '') {
         return null;
     }
 
-    if (stripos($token, 'PVEAPIToken=') === 0) {
-        $token = substr($token, strlen('PVEAPIToken='));
-    }
-
-    $portRaw = $server['proxmoxPort'] ?? getenv('PROXMOX_PORT') ?: '8006';
-    $port = (int) $portRaw;
-    if ($port <= 0 || $port > 65535) {
-        $port = 8006;
-    }
-
-    return ['host' => $host, 'node' => $node, 'token' => $token, 'port' => $port];
-}
-
-function get_proxmox_ssh_config(?array $server = null): ?array
-{
-    $host = trim($server['proxmoxSshHost'] ?? getenv('PROXMOX_SSH_HOST') ?: '');
-    if ($host === '') {
-        $api = get_proxmox_config($server);
-        $host = $api['host'] ?? '';
-    }
-
-    $user = trim($server['proxmoxSshUser'] ?? getenv('PROXMOX_SSH_USER') ?: '');
-    $password = (string) ($server['proxmoxSshPassword'] ?? getenv('PROXMOX_SSH_PASSWORD') ?: '');
-    $portRaw = $server['proxmoxSshPort'] ?? getenv('PROXMOX_SSH_PORT') ?: '22';
-    $port = (int) $portRaw;
-    if ($port <= 0 || $port > 65535) {
-        $port = 22;
-    }
-
-    if ($host === '' || $user === '' || $password === '') {
-        return null;
+    $url = rtrim($url, '/');
+    if (!preg_match('#^https?://#i', $url)) {
+        $url = 'http://' . $url;
     }
 
     return [
-        'host' => $host,
-        'port' => $port,
-        'user' => $user,
-        'password' => $password,
+        'agentUrl' => $url,
+        'token' => $token,
+        'source' => 'agent',
     ];
 }
 
 /**
- * @return array{raw: ?string, meta: array<string, mixed>}
+ * @return array{cpu: list<array{name: string, temp: int}>, disks: list<array{devpath: string, label: string, temp: int, model: string}>, meta: array<string, mixed>}|null
  */
-function proxmox_run_sensors_over_ssh(?array $server = null): array
+function proxmox_agent_fetch_thermal(?array $server = null): ?array
 {
-    $meta = [
-        'attempted' => false,
-        'ok' => false,
-        'method' => 'ssh',
-        'readingsCount' => 0,
-        'error' => null,
-        'sshHost' => null,
+    static $cacheKey = null;
+    static $cacheValue = null;
+    static $cacheFetched = false;
+
+    $cfg = get_proxmox_config($server);
+    $key = $cfg === null ? '' : $cfg['agentUrl'] . '|' . $cfg['token'];
+    if ($cacheFetched && $key === $cacheKey) {
+        return $cacheValue;
+    }
+
+    if ($cfg === null) {
+        return null;
+    }
+
+    $url = $cfg['agentUrl'] . '/v1/thermal';
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $cfg['token'],
+            'Accept: application/json',
+        ],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 20,
+        CURLOPT_CONNECTTIMEOUT => 5,
+    ]);
+
+    $body = curl_exec($ch);
+    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+
+    if (!is_string($body) || $body === '' || $httpCode !== 200) {
+        $GLOBALS['proxmox_agent_last_error'] = [
+            'httpCode' => $httpCode,
+            'url' => $url,
+            'curlError' => $curlErr !== '' ? $curlErr : null,
+            'bodySnippet' => is_string($body) ? substr($body, 0, 500) : null,
+        ];
+        $cacheKey = $key;
+        $cacheValue = null;
+        $cacheFetched = true;
+
+        return null;
+    }
+
+    unset($GLOBALS['proxmox_agent_last_error']);
+
+    $decoded = json_decode($body, true);
+    if (!is_array($decoded)) {
+        $cacheKey = $key;
+        $cacheValue = null;
+        $cacheFetched = true;
+
+        return null;
+    }
+
+    $cpu = $decoded['cpu'] ?? [];
+    $disks = $decoded['disks'] ?? [];
+    if (!is_array($cpu)) {
+        $cpu = [];
+    }
+    if (!is_array($disks)) {
+        $disks = [];
+    }
+
+    $cacheKey = $key;
+    $cacheValue = [
+        'cpu' => $cpu,
+        'disks' => $disks,
+        'meta' => is_array($decoded['meta'] ?? null) ? $decoded['meta'] : [],
     ];
+    $cacheFetched = true;
 
-    if (!function_exists('ssh2_connect')) {
-        $meta['error'] = 'ssh2_extension_missing';
+    return $cacheValue;
+}
 
-        return ['raw' => null, 'meta' => $meta];
-    }
-
-    $sshCfg = get_proxmox_ssh_config($server);
-    if ($sshCfg === null) {
-        $meta['error'] = 'ssh_not_configured';
-
-        return ['raw' => null, 'meta' => $meta];
-    }
-
-    $meta['attempted'] = true;
-    $meta['sshHost'] = $sshCfg['host'] . ':' . $sshCfg['port'];
-
-    $ssh = @ssh2_connect($sshCfg['host'], $sshCfg['port']);
-    if ($ssh === false) {
-        $meta['error'] = 'ssh_connect_failed';
-
-        return ['raw' => null, 'meta' => $meta];
-    }
-
-    if (!@ssh2_auth_password($ssh, $sshCfg['user'], $sshCfg['password'])) {
-        $meta['error'] = 'ssh_auth_failed';
-
-        return ['raw' => null, 'meta' => $meta];
-    }
-
-    $stream = @ssh2_exec($ssh, 'sensors -j 2>/dev/null || sensors');
-    if ($stream === false) {
-        $meta['error'] = 'ssh_exec_failed';
-
-        return ['raw' => null, 'meta' => $meta];
-    }
-
-    stream_set_blocking($stream, true);
-    $raw = stream_get_contents($stream);
-    fclose($stream);
-
-    if (!is_string($raw) || trim($raw) === '') {
-        $meta['error'] = 'ssh_empty_output';
-
-        return ['raw' => null, 'meta' => $meta];
-    }
-
-    $meta['ok'] = true;
-
-    return ['raw' => $raw, 'meta' => $meta];
+function proxmox_last_agent_error(): ?array
+{
+    return $GLOBALS['proxmox_agent_last_error'] ?? null;
 }
 
 /**
@@ -139,199 +128,8 @@ function proxmox_host_cpu_result(array $readings, array $meta): array
     return ['readings' => $readings, 'cpuSensors' => $meta];
 }
 
-function parse_disk_smart_temperature(array $smart): ?int
-{
-    $text = $smart['text'] ?? '';
-    if ($text === '') {
-        return null;
-    }
-
-    if (preg_match('/Temperature:\s+(\d+)\s+Celsius/i', $text, $m)) {
-        return (int) $m[1];
-    }
-
-    if (preg_match('/Current Drive Temperature:\s*(\d+)\s*C/i', $text, $m)) {
-        return (int) $m[1];
-    }
-
-    if (preg_match_all('/Temperature Sensor \d+:\s+(\d+)\s+Celsius/i', $text, $matches)) {
-        return max(array_map('intval', $matches[1]));
-    }
-
-    return null;
-}
-
-function proxmox_api_get(array $cfg, string $path, array $query = []): mixed
-{
-    $port = $cfg['port'] ?? 8006;
-    $url = 'https://' . $cfg['host'] . ':' . $port . '/api2/json' . $path;
-    if ($query !== []) {
-        $url .= '?' . http_build_query($query);
-    }
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: PVEAPIToken=' . $cfg['token'],
-    ]);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-
-    $body = curl_exec($ch);
-    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-    if (!$body || $httpCode !== 200) {
-        return null;
-    }
-
-    $decoded = json_decode($body, true);
-    if (!is_array($decoded) || !array_key_exists('data', $decoded)) {
-        return null;
-    }
-
-    return $decoded['data'];
-}
-
-function proxmox_api_post(array $cfg, string $path, array $form): mixed
-{
-    $port = $cfg['port'] ?? 8006;
-    $url = 'https://' . $cfg['host'] . ':' . $port . '/api2/json' . $path;
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: PVEAPIToken=' . $cfg['token'],
-    ]);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($form));
-
-    $body = curl_exec($ch);
-    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-    if (!$body || $httpCode !== 200) {
-        $GLOBALS['proxmox_api_last_error'] = [
-            'httpCode' => $httpCode,
-            'path' => $path,
-            'bodySnippet' => is_string($body) ? substr($body, 0, 500) : null,
-        ];
-
-        return null;
-    }
-
-    $decoded = json_decode($body, true);
-    if (!is_array($decoded) || !array_key_exists('data', $decoded)) {
-        $GLOBALS['proxmox_api_last_error'] = [
-            'httpCode' => $httpCode,
-            'path' => $path,
-            'bodySnippet' => is_string($body) ? substr($body, 0, 500) : null,
-        ];
-
-        return null;
-    }
-
-    unset($GLOBALS['proxmox_api_last_error']);
-
-    return $decoded['data'];
-}
-
-function proxmox_last_api_error(): ?array
-{
-    return $GLOBALS['proxmox_api_last_error'] ?? null;
-}
-
-function proxmox_execute_command(array $cfg, string $command): ?string
-{
-    $data = proxmox_api_post($cfg, '/nodes/' . rawurlencode($cfg['node']) . '/execute', [
-        'commands' => $command,
-    ]);
-    if ($data === null) {
-        return null;
-    }
-
-    if (is_string($data)) {
-        return $data;
-    }
-
-    if (is_array($data)) {
-        if (isset($data['out-data']) && is_string($data['out-data'])) {
-            return $data['out-data'];
-        }
-        if (isset($data[0]) && is_string($data[0])) {
-            return $data[0];
-        }
-        $exit = $data['exitcode'] ?? $data['exit-code'] ?? 0;
-        if ($exit !== 0) {
-            return null;
-        }
-        foreach (['out-data', 'output', 'stdout'] as $key) {
-            if (!empty($data[$key]) && is_string($data[$key])) {
-                return $data[$key];
-            }
-        }
-    }
-
-    return null;
-}
-
 /**
- * @return list<array{name: string, temp: int}>
- */
-function parse_coretemp_from_sensors_json(string $json): array
-{
-    $data = json_decode($json, true);
-    if (!is_array($data)) {
-        return [];
-    }
-
-    $readings = [];
-    foreach ($data as $chipData) {
-        if (!is_array($chipData)) {
-            continue;
-        }
-        foreach ($chipData as $label => $props) {
-            if (!is_array($props) || !preg_match('/^(Package id \d+|Core \d+)$/i', (string) $label)) {
-                continue;
-            }
-            foreach ($props as $key => $value) {
-                if (preg_match('/^temp\d+_input$/', (string) $key) && is_numeric($value)) {
-                    $readings[] = [
-                        'name' => (string) $label,
-                        'temp' => (int) round((float) $value),
-                    ];
-                    break;
-                }
-            }
-        }
-    }
-
-    return $readings;
-}
-
-/**
- * @return list<array{name: string, temp: int}>
- */
-function parse_coretemp_from_sensors_text(string $text): array
-{
-    $readings = [];
-    foreach (preg_split('/\r\n|\r|\n/', $text) as $line) {
-        if (!preg_match('/^(Package id \d+|Core \d+):\s+\+?([\d.]+)\s*(?:°| )?\s*C/i', trim($line), $m)) {
-            continue;
-        }
-        $readings[] = [
-            'name' => $m[1],
-            'temp' => (int) round((float) $m[2]),
-        ];
-    }
-
-    return $readings;
-}
-
-/**
- * Host CPU temps from lm-sensors on the PVE node (coretemp Package + Cores) via SSH.
+ * Host CPU temps from PVE agent (lm-sensors coretemp on the node).
  *
  * @return array{readings: list<array{name: string, temp: int}>, cpuSensors: array<string, mixed>}
  */
@@ -341,32 +139,50 @@ function get_proxmox_host_cpu_temperatures(?array $server = null): array
         return proxmox_host_cpu_result([], [
             'attempted' => false,
             'ok' => false,
-            'method' => 'ssh',
+            'method' => 'agent',
             'readingsCount' => 0,
-            'error' => 'proxmox_not_configured',
-            'sshHost' => null,
+            'error' => 'proxmox_agent_not_configured',
+            'agentUrl' => null,
         ]);
     }
 
-    $sshResult = proxmox_run_sensors_over_ssh($server);
-    $meta = $sshResult['meta'];
-    $raw = $sshResult['raw'];
+    $thermal = proxmox_agent_fetch_thermal($server);
+    if ($thermal === null) {
+        $err = proxmox_last_agent_error();
+        $agentUrl = get_proxmox_config($server)['agentUrl'] ?? null;
 
-    if ($raw === null) {
-        return proxmox_host_cpu_result([], $meta);
+        return proxmox_host_cpu_result([], [
+            'attempted' => true,
+            'ok' => false,
+            'method' => 'agent',
+            'readingsCount' => 0,
+            'error' => 'agent_request_failed',
+            'agentUrl' => $agentUrl,
+            'httpCode' => $err['httpCode'] ?? null,
+        ]);
     }
 
-    $trimmed = ltrim($raw);
     $readings = [];
-    if ($trimmed !== '' && $trimmed[0] === '{') {
-        $readings = parse_coretemp_from_sensors_json($raw);
-    }
-    if ($readings === []) {
-        $readings = parse_coretemp_from_sensors_text($raw);
+    foreach ($thermal['cpu'] as $row) {
+        if (!is_array($row) || !isset($row['name'], $row['temp'])) {
+            continue;
+        }
+        $readings[] = [
+            'name' => (string) $row['name'],
+            'temp' => (int) $row['temp'],
+        ];
     }
 
+    $meta = $thermal['meta']['cpu'] ?? [];
+    if (!is_array($meta)) {
+        $meta = [];
+    }
+    $meta['method'] = 'agent';
+    $meta['attempted'] = true;
+    $meta['agentUrl'] = get_proxmox_config($server)['agentUrl'] ?? null;
     if ($readings !== []) {
         $meta['error'] = null;
+        $meta['ok'] = true;
     }
 
     return proxmox_host_cpu_result($readings, $meta);
@@ -377,44 +193,31 @@ function get_proxmox_host_cpu_temperatures(?array $server = null): array
  */
 function get_proxmox_disk_temperatures(?array $server = null): array
 {
-    $cfg = get_proxmox_config($server);
-    if ($cfg === null) {
+    if (get_proxmox_config($server) === null) {
         return [];
     }
 
-    $disks = proxmox_api_get($cfg, '/nodes/' . rawurlencode($cfg['node']) . '/disks/list');
-    if (!is_array($disks)) {
+    $thermal = proxmox_agent_fetch_thermal($server);
+    if ($thermal === null) {
         return [];
     }
 
     $result = [];
-    foreach ($disks as $disk) {
+    foreach ($thermal['disks'] as $disk) {
         if (!is_array($disk)) {
             continue;
         }
         $devpath = $disk['devpath'] ?? '';
-        if ($devpath === '') {
+        $temp = $disk['temp'] ?? null;
+        if ($devpath === '' || $temp === null) {
             continue;
         }
-
-        $smart = proxmox_api_get($cfg, '/nodes/' . rawurlencode($cfg['node']) . '/disks/smart', [
-            'disk' => $devpath,
-        ]);
-        if (!is_array($smart)) {
-            continue;
-        }
-
-        $temp = parse_disk_smart_temperature($smart);
-        if ($temp === null) {
-            continue;
-        }
-
-        $model = trim($disk['model'] ?? 'unknown');
-        $short = basename($devpath);
+        $model = trim((string) ($disk['model'] ?? 'unknown'));
+        $label = $disk['label'] ?? (basename($devpath) . ' (' . $model . ')');
         $result[] = [
-            'devpath' => $devpath,
-            'label'   => $short . ' (' . $model . ')',
-            'temp'    => $temp,
+            'devpath' => (string) $devpath,
+            'label'   => (string) $label,
+            'temp'    => (int) $temp,
             'model'   => $model,
         ];
     }

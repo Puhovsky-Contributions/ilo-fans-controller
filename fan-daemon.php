@@ -331,9 +331,8 @@ while (true) {
         'serverId' => $serverId,
         'iloHost' => $serverConfig['host'],
         'proxmox' => $pveCfg !== null ? [
-            'host' => $pveCfg['host'],
-            'node' => $pveCfg['node'],
-            'port' => $pveCfg['port'],
+            'agentUrl' => $pveCfg['agentUrl'],
+            'source' => $pveCfg['source'] ?? 'agent',
         ] : null,
         'status' => 'ok',
         'autoEnabled' => true,

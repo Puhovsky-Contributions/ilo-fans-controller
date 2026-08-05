@@ -35,22 +35,16 @@
 - **Swarm-ready** docker-compose.yml
 - **GHCR build** on push to `main` (`.github/workflows/build-and-push.yml`)
 
-### 💾 Proxmox disk temperatures (optional)
-- Fan daemon + UI use **real drive temps** from a Proxmox node (API token)
-- `disks/list` → one `disks/smart` call per disk (no single bulk temp API)
-- Configure via env (`PROXMOX_HOST`, `PROXMOX_NODE`, `PROXMOX_PORT`, `PROXMOX_API_TOKEN`) or per-server fields in `/data/servers.json`
-- Fan daemon: `fanControlSources` in `auto-control.json` (see `__doc_fanControlSources` in that file and `lib/fan-control-sources.php`):
+### 💾 Proxmox temperatures via agent (optional)
+- Fan daemon + UI read **host CPU** (`sensors` / `pve:cpu`) and **disk SMART** (`pve:disks`) from **[ilo-fans-agent-pve](https://github.com/playtika/ilo-fans-agent-pve)** on each PVE node (HTTP on SDN IP, no TLS)
+- IFC calls `GET /v1/thermal` with Bearer token — no Proxmox API token or SSH to PVE
+- Configure via env (`PROXMOX_AGENT_URL`, `PROXMOX_AGENT_TOKEN`) or per-server `proxmoxAgentUrl` / `proxmoxAgentToken` in `/data/servers.json`
+- Fan daemon: `fanControlSources` in `auto-control.json` (see `__doc_fanControlSources` and `lib/fan-control-sources.php`):
   - **Proxmox:** `pve:cpu`, `pve:disks`
   - **iLO zones:** `ilo:all`, `ilo:ambient`, `ilo:cpu`, `ilo:memory`, `ilo:vr`, `ilo:storage`, `ilo:power`, `ilo:chipset`, `ilo:pci`, `ilo:other`
   - Default skips `ilo:cpu` when iLO CPU reads stuck (~40°C); uses `pve:cpu` + DIMM/VR/PCI + disk SMART
-  - Daemon logs to stdout: **one `fan_control_tick` JSON line per interval**, plus **`fan_speed_applied`** or **`fan_speed_apply_failed`** only when SSH apply runs (see [Fan daemon logs](#-fan-daemon-logs) below)
-- **Proxmox API token** (`pve:disks`): `disks/list` + `disks/smart` — **PVEAuditor** on the node is usually enough
-- **`pve:cpu`**: host `coretemp` via **SSH** `sensors` on the PVE host — `/nodes/.../execute` is *not* for shell commands ([Proxmox forum](https://forum.proxmox.com/threads/proxmox-execute-command.26030/#post-130467))
-- Set `PROXMOX_SSH_USER` / `PROXMOX_SSH_PASSWORD` (or `proxmoxSsh*` in `servers.json`); optional `PROXMOX_SSH_HOST` if SSH differs from API host
-- Minimal ACL for disks only:
-  ```bash
-  pveum acl modify /nodes/waw01-pve -token 'user@pam!ifc' -role PVEAuditor
-  ```
+  - Daemon JSON logs: `proxmox.agentUrl` + `source: agent`; `pve.cpuSensors.method` = `agent`
+- On PVE: install agent tarball, `listen` on SDN IP, `token init`, paste token into IFC
 
 ### ⚡ Performance Optimizations
 - **Combined SSH commands** for faster fan speed application
@@ -69,9 +63,8 @@ docker run -d --name ilo-fans-controller --restart always \
     -e ILO_USERNAME='Administrator' \
     -e ILO_PASSWORD='your-password' \
     -e AUTO_DAEMON='true' \
-    -e PROXMOX_HOST='pve.example.com' \
-    -e PROXMOX_NODE='waw01-pve' \
-    -e PROXMOX_API_TOKEN='user@pam!ifc=secret-uuid' \
+    -e PROXMOX_AGENT_URL='http://172.16.0.10:9847' \
+    -e PROXMOX_AGENT_TOKEN='your-agent-token' \
     harbor.ics.fr/ics/ilo-fans-controller:latest
 ```
 

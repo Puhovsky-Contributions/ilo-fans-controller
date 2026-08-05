@@ -6,14 +6,8 @@
     "username": "admin",
     "password": "secret",
     "minimumFanSpeed": 10,
-    "proxmoxHost": "10.10.9.50",
-    "proxmoxNode": "waw01-pve",
-    "proxmoxPort": 8006,
-    "proxmoxApiToken": "user@pam!ifc=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-    "proxmoxSshHost": "10.10.9.50",
-    "proxmoxSshPort": 22,
-    "proxmoxSshUser": "root",
-    "proxmoxSshPassword": "ssh-secret"
+    "proxmoxAgentUrl": "http://172.16.0.10:9847",
+    "proxmoxAgentToken": "your-agent-bearer-token"
   },
   {
     "id": "server2",
