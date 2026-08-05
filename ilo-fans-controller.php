@@ -40,6 +40,8 @@ function get_fans($server)
 
 	curl_setopt($curl_handle, CURLOPT_FOLLOWLOCATION, true);  // Follow redirects
 	curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);  // Return the JSON data
+	curl_setopt($curl_handle, CURLOPT_CONNECTTIMEOUT, 3);
+	curl_setopt($curl_handle, CURLOPT_TIMEOUT, 5);
 
 	$raw_ilo_data = curl_exec($curl_handle);
 
@@ -367,11 +369,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						die("Invalid fan name: $fan");
 				}
 
-				// Wait until the fans are set
-				if ($updated > 0)
-					do
+				if ($updated > 0) {
+					$targets = is_int($data['fans'])
+						? array_fill_keys(array_keys($FANS), (int) $data['fans'])
+						: $data['fans'];
+					for ($attempt = 0; $attempt < 3; $attempt++) {
+						usleep(200000);
 						$FANS = get_fans($server);
-					while ($FANS !== array_merge($FANS, $data['fans']));  // Wait until the fans are updated
+						$matched = true;
+						foreach ($targets as $fanName => $targetSpeed) {
+							if (!array_key_exists($fanName, $FANS)) {
+								continue;
+							}
+							if (abs((int) $FANS[$fanName] - (int) $targetSpeed) > 2) {
+								$matched = false;
+								break;
+							}
+						}
+						if ($matched) {
+							break;
+						}
+					}
+				}
+
+				$autoConfig = get_auto_control($server);
+				if (!empty($autoConfig['enabled'])) {
+					$FANS['warning'] = 'Auto-control is enabled; the daemon may override manual fan speeds.';
+				}
 
 				die(json_encode($FANS, JSON_PRETTY_PRINT));
 			} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets-{id}.json
@@ -599,6 +623,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						]"
 						@click="$store.servers.list.length > 1 && ($store.servers.active = i)">
 						<p class="font-semibold dark:text-white text-black text-sm" x-text="server.name"></p>
+						<p class="text-[10px] font-mono dark:text-gray-600 text-gray-400" x-text="server.id + ' · #' + i"></p>
 						<p class="text-xs dark:text-gray-500 text-gray-400 mb-2" x-text="$store.servers.summary(i).profileLabel"></p>
 						<p class="text-3xl font-mono font-bold"
 							:class="$store.servers.summary(i).isAlert ? 'text-red-500' : 'dark:text-emerald-400 text-emerald-600'"
@@ -971,11 +996,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						{ reading: 0, name: '—' }
 					);
 					const profile = s.autoControl?.profiles?.[s.autoControl?.profile];
-					const fanValues = Object.values(s.fans || {});
+					const fanValues = Object.entries(s.fans || {})
+						.filter(([name]) => name !== 'warning')
+						.map(([, v]) => v);
 					const avgFan = fanValues.length
 						? Math.round(fanValues.reduce((a, b) => a + b, 0) / fanValues.length)
 						: 0;
 					const fansDetail = Object.entries(s.fans || {})
+						.filter(([name]) => name !== 'warning')
 						.map(([name, speed]) => `${name}: ${speed}%`)
 						.join(' · ') || '—';
 					return {
@@ -1197,7 +1225,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					});
 
 					if (res.ok) {
-						Alpine.store('servers').list[i].fans = await res.json();
+						const data = await res.json();
+						if (data.warning) {
+							delete data.warning;
+						}
+						Alpine.store('servers').list[i].fans = data;
 						this.requestTime = new Date().getTime() - currentTimestamp;
 					}
 

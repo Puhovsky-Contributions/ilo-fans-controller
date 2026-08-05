@@ -19,6 +19,7 @@ index.php
 
 # Data directory (persistent)
 data/
+logs/
 
 # macOS
 .DS_Store

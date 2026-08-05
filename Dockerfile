@@ -24,13 +24,17 @@ COPY fan-daemon.php ./
 COPY lib/ ./lib/
 COPY auto-control.json ./
 COPY config.inc.php.env ./config.inc.php
+COPY docker/generate-supervisor-daemons.php ./docker/generate-supervisor-daemons.php
+COPY docker/docker-entrypoint.sh /docker-entrypoint.sh
 
 # Create data directory for persistent config
 RUN mkdir -p /data && \
-    chown -R www-data:www-data /var/www/html /data
+    chown -R www-data:www-data /var/www/html /data && \
+    chmod +x /docker-entrypoint.sh /var/www/html/docker/generate-supervisor-daemons.php
 
-# Supervisor configuration
-COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Supervisor configuration (fan daemons generated at container start)
+COPY docker/supervisord.base.conf /etc/supervisor/supervisord.conf
+RUN touch /etc/supervisor/conf.d/fan-daemons.generated.conf
 
 # Environment variables
 ENV ILO_HOST=""
@@ -47,5 +51,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 EXPOSE 80
 
-# Start supervisor (manages both Apache and fan-daemon)
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

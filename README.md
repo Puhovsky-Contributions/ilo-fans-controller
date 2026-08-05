@@ -27,7 +27,9 @@
 - **Persistent configuration** via `auto-control.json`
 
 ### 🐳 Enhanced Docker Support
-- **Supervisord** manages both Apache and the daemon in a single container
+- **Supervisord** manages both Apache and one **fan-daemon** process per entry in `/data/servers.json` (up to 5)
+- At container start, `docker/generate-supervisor-daemons.php` writes supervisord programs using each server’s **`id`** field (any string — not `server1`/`server2` unless you choose those names)
+- After changing `servers.json`, **restart the container** so supervisord picks up new daemon programs
 - **Environment variables** for all configuration
 - **Health checks** built-in
 - **Swarm-ready** docker-compose.yml
@@ -108,6 +110,33 @@ volumes:
 | `ILO_PASSWORD` | iLO password | *required* |
 | `MINIMUM_FAN_SPEED` | Minimum allowed fan speed (%) | `10` |
 | `AUTO_DAEMON` | Enable background auto-control daemon | `true` |
+
+### Multi-server: HTTP index vs daemon `id`
+
+- **Web UI / POST JSON** use **`server`** = **array index** (`0` = first object in `/data/servers.json`, `1` = second, …)
+- **CLI / supervisord** use the string **`id`** from each server object (e.g. `waw01-ilo`, `dl360-g9`)
+- Per-server files: `auto-control-{id}.json`, `presets-{id}.json`, `fan-daemon-{id}.pid`
+
+Example `servers.json` with custom ids:
+
+```json
+[
+  {
+    "id": "waw01-ilo",
+    "name": "WAW01",
+    "host": "192.168.1.10",
+    "username": "Administrator",
+    "password": "secret"
+  },
+  {
+    "id": "lab-g9",
+    "name": "Lab DL360 G9",
+    "host": "192.168.1.11",
+    "username": "Administrator",
+    "password": "secret"
+  }
+]
+```
 
 ---
 

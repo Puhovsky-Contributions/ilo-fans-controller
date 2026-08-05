@@ -30,14 +30,8 @@ foreach ($servers as $s) {
 
 if ($serverConfig === null) {
     if ($requestedId !== null && $requestedId !== 'default') {
-        fan_daemon_log_json([
-            'serverId' => $requestedId,
-            'status' => 'skipped',
-            'reason' => 'server_not_in_servers_json',
-            'hint' => 'Add server to /data/servers.json or disable this supervisord program',
-        ]);
-        echo "Server {$requestedId} not in servers.json — supervisor slot idle (exit 0)\n";
-        exit(0);
+        fwrite(STDERR, "Server {$requestedId} not in servers.json\n");
+        exit(1);
     }
     $serverConfig = $servers[0] ?? null;
     if ($serverConfig === null) {
