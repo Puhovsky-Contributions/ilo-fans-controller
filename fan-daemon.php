@@ -266,7 +266,7 @@ while (true) {
     $ambientTemp = $iloData['ambient'];
     $fanCount = $iloData['fanCount'] ?: 8;
 
-    $diskReadings = get_proxmox_disk_temperatures($serverConfig);
+    $diskReadings = get_proxmox_disk_temperatures($serverConfig, $config);
     $pveCpuResult = get_proxmox_host_cpu_temperatures($serverConfig);
     $pveCpuReadings = $pveCpuResult['readings'];
 

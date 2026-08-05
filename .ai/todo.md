@@ -1,16 +1,18 @@
-# temperature zones unify
+# fan control UI + disk ignore
 
 ## Plan
-- [x] `lib/temperature-zones.php` — registry, `source` = fanControlSources token
-- [x] PVE groups: `zone` cpu/disks (not pve-cpu), `source` pve:cpu / pve:disks
-- [x] iLO groups: `source` ilo:{zone}, same short `zone` as daemon iloZones keys
-- [x] `is_fan_control_source_active(source)` replaces section+zone hack
-- [x] UI: key `group.source`, mono token on card, legend mentions fanControlSources
+- [x] Card max °C → only `fanControlActive` groups (+ non-ignored disks)
+- [x] 🏠 click → toggle `fanControlSources`, save auto-control.json
+- [x] `ignoredDisks` in config; filter pve:disks in daemon + max()
+- [x] Disk row ignore button; label `dev · serial/wwn`
+- [x] Remove `ilo:memory` mono token on zone cards
+- [x] Agent: smartctl serial + WWN in JSON
 
 ## Review
-One id everywhere: config, API, UI, daemon bySource keys align.
+Summary + alert align with daemon max(). Per-disk ignore needs agent deploy for real serials (sysfs model ≠ serial).
 
 ## How to test
-1. `?api=temperatures&server=0` — each group has `source`, `section`, `zone`; no `pve-cpu`
-2. 🏠 on groups whose `source` ∈ top-level `fanControlSources`
-3. UI cards show `ilo:memory` etc. beside label (sm+)
+1. Card max matches hottest among 🏠 zones only (not ambient etc.)
+2. Click 🏠 → `fanControlSources` in saved JSON toggles
+3. Disks → ignore nvme → card/daemon ignore its temp; `ignoredDisks` has token
+4. After agent upgrade: API disk names show serial not Samsung ellipsis

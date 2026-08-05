@@ -139,15 +139,19 @@ function get_temperatures($server)
 		]);
 	}
 
-	$diskReadings = get_proxmox_disk_temperatures($server);
+	$diskReadings = get_proxmox_disk_temperatures($server, $autoConfig);
 	if (!empty($diskReadings)) {
 		$pveDiskGroup = temperature_group_shell('pve:disks');
 		foreach ($diskReadings as $disk) {
 			$temp = $disk['temp'];
 			$pveDiskGroup['sensors'][] = [
-				'name' => $disk['label'],
+				'name' => proxmox_disk_display_label($disk),
 				'reading' => $temp,
 				'critical' => 55,
+				'devpath' => $disk['devpath'],
+				'serial' => $disk['serial'],
+				'wwn' => $disk['wwn'],
+				'ignored' => (bool) ($disk['ignored'] ?? false),
 			];
 			$pveDiskGroup['min'] = min($pveDiskGroup['min'], $temp);
 			$pveDiskGroup['max'] = max($pveDiskGroup['max'], $temp);
@@ -190,6 +194,7 @@ function get_temperatures($server)
 	return [
 		'sections' => $sections,
 		'fanControlSources' => get_fan_control_sources($autoConfig),
+		'ignoredDisks' => get_ignored_disk_ids($autoConfig),
 	];
 }
 
@@ -207,7 +212,9 @@ function get_auto_control($server) {
 				'turbo' => ['label' => 'Turbo', 'minSpeed' => 40, 'maxSpeed' => 100, 'targetTemp' => 40, 'maxTemp' => 55],
 			],
 			'checkInterval' => 30,
-			'daemonRunning' => false
+			'daemonRunning' => false,
+			'fanControlSources' => ['pve:cpu', 'pve:disks', 'ilo:memory', 'ilo:vr', 'ilo:pci'],
+			'ignoredDisks' => [],
 		];
 		return $config;
 	}
@@ -230,6 +237,16 @@ function save_auto_control($config, $server) {
 	$id = $server['id'];
 	$configFile = auto_control_config_write_path($id);
 	unset($config['daemonRunning']); // Don't save runtime state
+	if (file_exists($configFile)) {
+		$existing = json_decode(file_get_contents($configFile), true);
+		if (is_array($existing)) {
+			foreach ($existing as $key => $value) {
+				if (str_starts_with((string) $key, '__doc_') && !array_key_exists($key, $config)) {
+					$config[$key] = $value;
+				}
+			}
+		}
+	}
 	file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT));
 	return get_auto_control($server);
 }
@@ -699,7 +716,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						<span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0" title="Used in auto fan speed">
 							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M10.403 2.43a1.5 1.5 0 00-1.806 0l-7.5 5.625a1.5 1.5 0 00-.597 1.194V16.5a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5v-3.75h3v3.75a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5V9.249a1.5 1.5 0 00-.597-1.194l-7.5-5.625z" clip-rule="evenodd"/></svg>
 						</span>
-						<span>— token from <code class="font-mono text-[11px]">fanControlSources</code> (e.g. <code class="font-mono text-[11px]">ilo:memory</code>)</span>
+						<span>— click home on a zone to include/exclude it from auto fan control</span>
 					</p>
 				</div>
 				<div class="flex items-center space-x-2">
@@ -739,13 +756,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 											:class="group.badgeClass || 'bg-gray-500'"
 											x-text="group.icon"></span>
 								<span class="font-medium text-sm dark:text-gray-200 text-gray-800 truncate" x-text="group.label"></span>
-								<span class="text-[10px] font-mono dark:text-gray-600 text-gray-400 shrink-0 hidden sm:inline" x-text="group.source"></span>
 								<span class="text-xs dark:text-gray-600 text-gray-400 shrink-0" x-text="'(' + group.count + ')'"></span>
-								<span x-show="group.fanControlActive && $store.autoControl.config.enabled"
-									class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0"
-									:x-title="'fanControlSources: ' + group.source">
+								<button type="button"
+									@click.stop="$store.autoControl.toggleFanControlSource(group.source)"
+									class="inline-flex items-center justify-center w-5 h-5 rounded-full shrink-0 transition-opacity"
+									:class="group.fanControlActive ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'opacity-35 dark:text-gray-600 text-gray-400 hover:opacity-70'"
+									title="Include/exclude zone in auto fan control">
 									<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3 h-3"><path fill-rule="evenodd" d="M10.403 2.43a1.5 1.5 0 00-1.806 0l-7.5 5.625a1.5 1.5 0 00-.597 1.194V16.5a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5v-3.75h3v3.75a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5V9.249a1.5 1.5 0 00-.597-1.194l-7.5-5.625z" clip-rule="evenodd"/></svg>
-								</span>
+								</button>
 							</div>
 							<div class="flex items-center space-x-3">
 								<div class="text-right">
@@ -777,9 +795,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 									<span class="font-medium">Unavailable:</span>
 									<span x-text="group.fetchError"></span>
 								</p>
-								<template x-for="sensor in group.sensors" :key="sensor.name">
-									<div class="flex items-center justify-between py-1 px-2 rounded dark:hover:bg-gray-900 hover:bg-gray-50">
-										<span class="text-xs dark:text-gray-500 text-gray-600 truncate mr-2" x-text="sensor.name"></span>
+								<template x-for="sensor in group.sensors" :key="sensor.name + (sensor.devpath || '')">
+									<div class="flex items-center justify-between py-1 px-2 rounded dark:hover:bg-gray-900 hover:bg-gray-50"
+										:class="sensor.ignored ? 'opacity-50' : ''">
+										<div class="flex items-center gap-1.5 min-w-0 mr-2">
+											<span class="text-xs dark:text-gray-500 text-gray-600 truncate" x-text="sensor.name"></span>
+											<button type="button"
+												x-show="group.source === 'pve:disks' && (sensor.serial || sensor.wwn || sensor.devpath)"
+												@click.stop="$store.autoControl.toggleIgnoredDisk(sensor)"
+												class="text-[10px] px-1 py-0.5 rounded border shrink-0"
+												:class="sensor.ignored ? 'border-amber-500/50 text-amber-600 dark:text-amber-400' : 'dark:border-gray-700 border-gray-200 dark:text-gray-500 text-gray-500'"
+												x-text="sensor.ignored ? 'ignored' : 'ignore'"></button>
+										</div>
 										<div class="flex items-center space-x-2">
 											<div class="w-16 h-1 rounded-full dark:bg-gray-800 bg-gray-200">
 												<div class="h-full rounded-full"
@@ -941,9 +968,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				summary(i) {
 					const s = this.list[i];
 					const groups = (s.temperatures?.sections || []).flatMap(sec => sec.groups || []);
-					const allSensors = groups.flatMap(g => g.sensors || []);
-					const hottest = allSensors.reduce(
-						(a, b) => a.reading > b.reading ? a : b,
+					const activeGroups = groups.filter(g => g.fanControlActive);
+					const controlSensors = activeGroups.flatMap(g => {
+						const sensors = g.sensors || [];
+						if (g.source === 'pve:disks') {
+							return sensors.filter(sen => !sen.ignored);
+						}
+						return sensors;
+					});
+					const hottest = controlSensors.reduce(
+						(a, b) => (b.reading ?? 0) > (a.reading ?? 0) ? b : a,
 						{ reading: 0, name: '—' }
 					);
 					const profile = s.autoControl?.profiles?.[s.autoControl?.profile];
@@ -1062,6 +1096,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				async setProfile(profileKey) {
 					this.config.profile = profileKey;
 					await this.save();
+				},
+
+				normalizeFanControlSources() {
+					if (!Array.isArray(this.config.fanControlSources)) {
+						this.config.fanControlSources = ['pve:cpu', 'pve:disks', 'ilo:memory', 'ilo:vr', 'ilo:pci'];
+					}
+					if (!Array.isArray(this.config.ignoredDisks)) {
+						this.config.ignoredDisks = [];
+					}
+				},
+
+				async toggleFanControlSource(source) {
+					this.normalizeFanControlSources();
+					let sources = [...this.config.fanControlSources];
+					const idx = sources.indexOf(source);
+					if (idx >= 0) {
+						if (sources.length <= 1) {
+							return;
+						}
+						sources.splice(idx, 1);
+					} else {
+						sources.push(source);
+					}
+					this.config.fanControlSources = sources;
+					await this.save();
+					await Alpine.store('temperatures').refresh();
+				},
+
+				diskIgnoreToken(sensor) {
+					const serial = (sensor.serial || '').trim();
+					if (serial) return serial;
+					const wwn = (sensor.wwn || '').trim();
+					if (wwn) return wwn;
+					const devpath = sensor.devpath || '';
+					if (devpath) {
+						const parts = devpath.split('/');
+						return parts[parts.length - 1] || '';
+					}
+					return '';
+				},
+
+				async toggleIgnoredDisk(sensor) {
+					this.normalizeFanControlSources();
+					const token = this.diskIgnoreToken(sensor);
+					if (!token) return;
+					const norm = token.toLowerCase();
+					let list = [...this.config.ignoredDisks];
+					const idx = list.findIndex(x => String(x).toLowerCase().trim() === norm);
+					if (idx >= 0) {
+						list.splice(idx, 1);
+					} else {
+						list.push(token);
+					}
+					this.config.ignoredDisks = list;
+					await this.save();
+					await Alpine.store('temperatures').refresh();
 				},
 
 				async refresh() {

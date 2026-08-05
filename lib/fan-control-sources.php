@@ -81,7 +81,8 @@ function build_fan_control_temps_detailed(
         if ($source === 'pve:cpu') {
             $chunk = array_column($pveCpuReadings, 'temp');
         } elseif ($source === 'pve:disks') {
-            $chunk = array_column($diskReadings, 'temp');
+            $activeDisks = filter_disks_for_fan_control($diskReadings, $config);
+            $chunk = array_column($activeDisks, 'temp');
         } elseif ($source === 'ilo:all') {
             foreach ($iloZones as $readings) {
                 $chunk = array_merge($chunk, $readings);

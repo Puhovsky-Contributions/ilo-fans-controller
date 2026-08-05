@@ -190,6 +190,85 @@ function get_proxmox_host_cpu_temperatures(?array $server = null): array
     return proxmox_host_cpu_result($readings, $meta);
 }
 
+/** @return list<string> normalized ignore tokens from auto-control config */
+function get_ignored_disk_ids(array $config): array
+{
+    $raw = $config['ignoredDisks'] ?? [];
+    if (!is_array($raw)) {
+        return [];
+    }
+    $out = [];
+    foreach ($raw as $item) {
+        if (!is_string($item)) {
+            continue;
+        }
+        $t = strtolower(trim($item));
+        if ($t !== '') {
+            $out[] = $t;
+        }
+    }
+
+    return array_values(array_unique($out));
+}
+
+function proxmox_disk_ignore_key(array $disk): string
+{
+    $serial = strtolower(trim((string) ($disk['serial'] ?? '')));
+    if ($serial !== '' && $serial !== 'unknown') {
+        return 'serial:' . $serial;
+    }
+    $wwn = strtolower(trim((string) ($disk['wwn'] ?? '')));
+    if ($wwn !== '' && $wwn !== 'unknown') {
+        return 'wwn:' . $wwn;
+    }
+    $dev = strtolower(trim(basename((string) ($disk['devpath'] ?? ''))));
+    if ($dev !== '') {
+        return 'dev:' . $dev;
+    }
+
+    return '';
+}
+
+/** Whether disk is excluded from pve:disks fan control (still shown in UI). */
+function is_disk_ignored_for_fan_control(array $disk, array $config): bool
+{
+    $ignored = get_ignored_disk_ids($config);
+    if ($ignored === []) {
+        return false;
+    }
+
+    $candidates = [];
+    foreach (['serial', 'wwn'] as $key) {
+        $v = strtolower(trim((string) ($disk[$key] ?? '')));
+        if ($v !== '' && $v !== 'unknown') {
+            $candidates[] = $v;
+        }
+    }
+    $dev = strtolower(trim(basename((string) ($disk['devpath'] ?? ''))));
+    if ($dev !== '') {
+        $candidates[] = $dev;
+    }
+
+    foreach ($ignored as $needle) {
+        foreach ($candidates as $hay) {
+            if ($hay === $needle || str_contains($hay, $needle) || str_contains($needle, $hay)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/** @param list<array{devpath: string, label: string, temp: int, model: string, serial?: string, wwn?: string}> $readings */
+function filter_disks_for_fan_control(array $readings, array $config): array
+{
+    return array_values(array_filter(
+        $readings,
+        static fn (array $disk): bool => !is_disk_ignored_for_fan_control($disk, $config)
+    ));
+}
+
 /** Human disk id: serial > wwn > short model (same model × N disks). */
 function proxmox_disk_identity(array $disk): string
 {
@@ -213,13 +292,13 @@ function proxmox_disk_display_label(array $disk): string
     $devpath = (string) ($disk['devpath'] ?? '');
     $dev = $devpath !== '' ? basename($devpath) : 'disk';
 
-    return $dev . ' (' . proxmox_disk_identity($disk) . ')';
+    return $dev . ' · ' . proxmox_disk_identity($disk);
 }
 
 /**
- * @return list<array{devpath: string, label: string, temp: int, model: string}>
+ * @return list<array{devpath: string, label: string, temp: int, model: string, serial: string, wwn: string, ignored: bool}>
  */
-function get_proxmox_disk_temperatures(?array $server = null): array
+function get_proxmox_disk_temperatures(?array $server = null, ?array $autoConfig = null): array
 {
     if (get_proxmox_config($server) === null) {
         return [];
@@ -242,7 +321,7 @@ function get_proxmox_disk_temperatures(?array $server = null): array
         }
         $model = trim((string) ($disk['model'] ?? 'unknown'));
         $label = proxmox_disk_display_label($disk);
-        $result[] = [
+        $row = [
             'devpath' => (string) $devpath,
             'label'   => $label,
             'temp'    => (int) $temp,
@@ -250,6 +329,8 @@ function get_proxmox_disk_temperatures(?array $server = null): array
             'serial'  => trim((string) ($disk['serial'] ?? '')),
             'wwn'     => trim((string) ($disk['wwn'] ?? '')),
         ];
+        $row['ignored'] = $autoConfig !== null && is_disk_ignored_for_fan_control($row, $autoConfig);
+        $result[] = $row;
     }
 
     usort($result, static function (array $a, array $b): int {
