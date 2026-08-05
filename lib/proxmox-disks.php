@@ -70,7 +70,6 @@ function proxmox_api_get(array $cfg, string $path, array $query = []): mixed
 
     $body = curl_exec($ch);
     $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
 
     if (!$body || $httpCode !== 200) {
         return null;
@@ -102,7 +101,6 @@ function proxmox_api_post(array $cfg, string $path, array $form): mixed
 
     $body = curl_exec($ch);
     $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
 
     if (!$body || $httpCode !== 200) {
         return null;
