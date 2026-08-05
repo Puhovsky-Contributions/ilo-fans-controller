@@ -158,6 +158,8 @@ Example `servers.json` with custom ids:
 ]
 ```
 
+**Troubleshooting:** If logs show `fan-daemon-server1`, empty iLO host, and `config_missing` for `/data/auto-control-server1.json` while your `id` is different (e.g. `waw01-pve`), PHP did not parse `/data/servers.json` and fell back to the old single-server default. Fix the file (straight `"` quotes only — no “smart quotes”, no trailing commas after the last field), validate with `php -r 'json_decode(file_get_contents("/data/servers.json")); echo json_last_error_msg();'`, then **restart the container**. The daemon needs `/data/auto-control-{id}.json` matching each server’s `id` (enable auto-control in the UI or copy from `auto-control.json`).
+
 ---
 
 ## 🎛️ Auto-Control Profiles

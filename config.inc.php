@@ -30,7 +30,28 @@ function get_servers() {
     $serversFile = '/data/servers.json';
     if (file_exists($serversFile)) {
         $data = json_decode(file_get_contents($serversFile), true);
-        if (is_array($data) && count($data) > 0) return $data;
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $msg = 'servers.json: invalid JSON (' . json_last_error_msg() . ')';
+            if (PHP_SAPI === 'cli') {
+                fwrite(STDERR, $msg . "\n");
+                exit(1);
+            }
+            trigger_error($msg, E_USER_WARNING);
+
+            return [];
+        }
+        if (!is_array($data) || count($data) === 0) {
+            $msg = 'servers.json: must be a non-empty JSON array';
+            if (PHP_SAPI === 'cli') {
+                fwrite(STDERR, $msg . "\n");
+                exit(1);
+            }
+            trigger_error($msg, E_USER_WARNING);
+
+            return [];
+        }
+
+        return $data;
     }
     global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD, $MINIMUM_FAN_SPEED;
     return [[

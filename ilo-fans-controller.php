@@ -3,7 +3,9 @@
 require 'config.inc.php';
 require __DIR__ . '/lib/proxmox-disks.php';
 require __DIR__ . '/lib/ilo-zones.php';
+require __DIR__ . '/lib/temperature-zones.php';
 require __DIR__ . '/lib/fan-control-sources.php';
+require __DIR__ . '/lib/auto-control-config.php';
 
 function get_presets($server)
 {
@@ -57,21 +59,6 @@ function get_fans($server)
 	return $fans ?? [];
 }
 
-function get_zone_info($zone) {
-	$zoneInfos = [
-		'ambient' => ['icon' => 'A', 'label' => 'Ambient', 'color' => 'sky', 'badgeClass' => 'bg-sky-500'],
-		'cpu' => ['icon' => 'C', 'label' => 'CPUs', 'color' => 'violet', 'badgeClass' => 'bg-violet-500'],
-		'memory' => ['icon' => 'M', 'label' => 'Memory', 'color' => 'pink', 'badgeClass' => 'bg-pink-500'],
-		'vr' => ['icon' => 'V', 'label' => 'Regulators', 'color' => 'amber', 'badgeClass' => 'bg-amber-500'],
-		'storage' => ['icon' => 'S', 'label' => 'Storage', 'color' => 'blue', 'badgeClass' => 'bg-blue-500'],
-		'power' => ['icon' => 'P', 'label' => 'Power Supply', 'color' => 'green', 'badgeClass' => 'bg-green-500'],
-		'chipset' => ['icon' => 'I', 'label' => 'Chipset / iLO', 'color' => 'orange', 'badgeClass' => 'bg-orange-500'],
-		'pci' => ['icon' => 'X', 'label' => 'PCI Slots', 'color' => 'indigo', 'badgeClass' => 'bg-indigo-500'],
-		'other' => ['icon' => '?', 'label' => 'Other', 'color' => 'gray', 'badgeClass' => 'bg-gray-500'],
-	];
-	return $zoneInfos[$zone] ?? $zoneInfos['other'];
-}
-
 function get_temperatures($server)
 {
 	$autoConfig = get_auto_control($server);
@@ -101,20 +88,7 @@ function get_temperatures($server)
 					$zone = get_temp_zone($name);
 
 					if (!isset($iloGrouped[$zone])) {
-						$zoneInfo = get_zone_info($zone);
-						$iloGrouped[$zone] = [
-							'zone' => $zone,
-							'section' => 'ilo',
-							'icon' => $zoneInfo['icon'],
-							'label' => $zoneInfo['label'],
-							'color' => $zoneInfo['color'],
-							'badgeClass' => $zoneInfo['badgeClass'],
-							'sensors' => [],
-							'avg' => 0,
-							'min' => PHP_INT_MAX,
-							'max' => 0,
-							'maxCritical' => 0,
-						];
+						$iloGrouped[$zone] = temperature_group_shell(temperature_ilo_source_for_zone($zone));
 					}
 
 					$iloGrouped[$zone]['sensors'][] = [
@@ -138,19 +112,7 @@ function get_temperatures($server)
 	$pveCpuResult = get_proxmox_host_cpu_temperatures($server);
 	$pveCpuReadings = $pveCpuResult['readings'];
 	if (!empty($pveCpuReadings)) {
-		$pveCpuGroup = [
-			'zone' => 'pve-cpu',
-			'section' => 'pve',
-			'icon' => 'H',
-			'label' => 'Host CPU (coretemp)',
-			'color' => 'violet',
-			'badgeClass' => 'bg-violet-500',
-			'sensors' => [],
-			'avg' => 0,
-			'min' => PHP_INT_MAX,
-			'max' => 0,
-			'maxCritical' => 100,
-		];
+		$pveCpuGroup = temperature_group_shell('pve:cpu');
 		foreach ($pveCpuReadings as $reading) {
 			$temp = $reading['temp'];
 			$pveCpuGroup['sensors'][] = [
@@ -161,40 +123,25 @@ function get_temperatures($server)
 			$pveCpuGroup['min'] = min($pveCpuGroup['min'], $temp);
 			$pveCpuGroup['max'] = max($pveCpuGroup['max'], $temp);
 		}
+		usort($pveCpuGroup['sensors'], static function (array $a, array $b): int {
+			$c = ($b['reading'] ?? 0) <=> ($a['reading'] ?? 0);
+			if ($c !== 0) {
+				return $c;
+			}
+
+			return strcmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+		});
 		$pveGroups[] = $pveCpuGroup;
 	} elseif (get_proxmox_config($server) !== null) {
 		$cpuMeta = $pveCpuResult['cpuSensors'] ?? [];
-		$pveGroups[] = [
-			'zone' => 'pve-cpu',
-			'section' => 'pve',
-			'icon' => 'H',
-			'label' => 'Host CPU (coretemp)',
-			'color' => 'violet',
-			'badgeClass' => 'bg-violet-500',
-			'sensors' => [],
-			'avg' => 0,
-			'min' => PHP_INT_MAX,
-			'max' => 0,
-			'maxCritical' => 100,
+		$pveGroups[] = array_merge(temperature_group_shell('pve:cpu'), [
 			'fetchError' => $cpuMeta['error'] ?? 'unknown',
-		];
+		]);
 	}
 
 	$diskReadings = get_proxmox_disk_temperatures($server);
 	if (!empty($diskReadings)) {
-		$pveDiskGroup = [
-			'zone' => 'pve-disks',
-			'section' => 'pve',
-			'icon' => 'S',
-			'label' => 'Disks (SMART)',
-			'color' => 'blue',
-			'badgeClass' => 'bg-blue-500',
-			'sensors' => [],
-			'avg' => 0,
-			'min' => PHP_INT_MAX,
-			'max' => 0,
-			'maxCritical' => 55,
-		];
+		$pveDiskGroup = temperature_group_shell('pve:disks');
 		foreach ($diskReadings as $disk) {
 			$temp = $disk['temp'];
 			$pveDiskGroup['sensors'][] = [
@@ -208,49 +155,34 @@ function get_temperatures($server)
 		$pveGroups[] = $pveDiskGroup;
 	}
 
-	$finalize = function (array &$group) use ($autoConfig) {
-		$sum = array_sum(array_column($group['sensors'], 'reading'));
-		$count = count($group['sensors']);
-		$group['avg'] = $count > 0 ? round($sum / $count, 1) : 0;
-		$group['count'] = $count;
-		if ($group['min'] === PHP_INT_MAX) {
-			$group['min'] = 0;
-		}
-		$group['fanControlActive'] = is_fan_control_group_active(
-			$group['section'],
-			$group['zone'],
-			$autoConfig
-		);
-	};
-
-	$iloOrder = ['ambient', 'cpu', 'memory', 'vr', 'storage', 'power', 'chipset', 'pci', 'other'];
 	$iloGroups = [];
-	foreach ($iloOrder as $zone) {
+	foreach (temperature_ilo_zone_order() as $zone) {
 		if (!isset($iloGrouped[$zone])) {
 			continue;
 		}
 		$group = $iloGrouped[$zone];
-		$finalize($group);
+		temperature_finalize_group($group, $autoConfig);
 		$iloGroups[] = $group;
 	}
 
 	foreach ($pveGroups as &$pg) {
-		$finalize($pg);
+		temperature_finalize_group($pg, $autoConfig);
 	}
 	unset($pg);
 
+	$sectionLabels = temperature_section_labels();
 	$sections = [];
 	if ($iloGroups !== []) {
 		$sections[] = [
 			'id' => 'ilo',
-			'label' => 'iLO',
+			'label' => $sectionLabels['ilo'],
 			'groups' => $iloGroups,
 		];
 	}
 	if ($pveGroups !== []) {
 		$sections[] = [
 			'id' => 'pve',
-			'label' => 'Proxmox',
+			'label' => $sectionLabels['pve'],
 			'groups' => $pveGroups,
 		];
 	}
@@ -263,9 +195,7 @@ function get_temperatures($server)
 
 function get_auto_control($server) {
 	$id = $server['id'];
-	$configFile = __DIR__ . "/auto-control-$id.json";
-	if (!file_exists($configFile))
-		$configFile = __DIR__ . '/auto-control.json';
+	$configFile = resolve_auto_control_config_file($id);
 
 	if (!file_exists($configFile)) {
 		$config = [
@@ -298,7 +228,7 @@ function get_auto_control($server) {
 
 function save_auto_control($config, $server) {
 	$id = $server['id'];
-	$configFile = __DIR__ . "/auto-control-$id.json";
+	$configFile = auto_control_config_write_path($id);
 	unset($config['daemonRunning']); // Don't save runtime state
 	file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT));
 	return get_auto_control($server);
@@ -769,7 +699,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						<span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0" title="Used in auto fan speed">
 							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M10.403 2.43a1.5 1.5 0 00-1.806 0l-7.5 5.625a1.5 1.5 0 00-.597 1.194V16.5a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5v-3.75h3v3.75a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5V9.249a1.5 1.5 0 00-.597-1.194l-7.5-5.625z" clip-rule="evenodd"/></svg>
 						</span>
-						<span>— zone used in auto fan calculation</span>
+						<span>— token from <code class="font-mono text-[11px]">fanControlSources</code> (e.g. <code class="font-mono text-[11px]">ilo:memory</code>)</span>
 					</p>
 				</div>
 				<div class="flex items-center space-x-2">
@@ -798,7 +728,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				<div class="mb-4">
 					<h2 class="text-sm font-semibold uppercase tracking-wide dark:text-gray-500 text-gray-500 mb-2" x-text="section.label"></h2>
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-						<template x-for="group in (section.groups || [])" :key="section.id + '-' + group.zone">
+						<template x-for="group in (section.groups || [])" :key="group.source">
 							<div x-data="{ open: false }" class="rounded-lg dark:bg-gray-900 bg-gray-50 border dark:border-gray-875 border-gray-150 overflow-hidden"
 								:class="group.fanControlActive && $store.autoControl.config.enabled ? 'ring-1 ring-emerald-500/40 dark:ring-emerald-500/30' : ''">
 								<div class="p-2.5 cursor-pointer select-none flex items-center justify-between"
@@ -809,10 +739,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 											:class="group.badgeClass || 'bg-gray-500'"
 											x-text="group.icon"></span>
 								<span class="font-medium text-sm dark:text-gray-200 text-gray-800 truncate" x-text="group.label"></span>
+								<span class="text-[10px] font-mono dark:text-gray-600 text-gray-400 shrink-0 hidden sm:inline" x-text="group.source"></span>
 								<span class="text-xs dark:text-gray-600 text-gray-400 shrink-0" x-text="'(' + group.count + ')'"></span>
 								<span x-show="group.fanControlActive && $store.autoControl.config.enabled"
 									class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0"
-									title="Used in auto fan speed">
+									:x-title="'fanControlSources: ' + group.source">
 									<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-3 h-3"><path fill-rule="evenodd" d="M10.403 2.43a1.5 1.5 0 00-1.806 0l-7.5 5.625a1.5 1.5 0 00-.597 1.194V16.5a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5v-3.75h3v3.75a1.5 1.5 0 001.5 1.5h4.5a1.5 1.5 0 001.5-1.5V9.249a1.5 1.5 0 00-.597-1.194l-7.5-5.625z" clip-rule="evenodd"/></svg>
 								</span>
 							</div>

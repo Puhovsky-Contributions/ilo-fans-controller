@@ -190,6 +190,32 @@ function get_proxmox_host_cpu_temperatures(?array $server = null): array
     return proxmox_host_cpu_result($readings, $meta);
 }
 
+/** Human disk id: serial > wwn > short model (same model × N disks). */
+function proxmox_disk_identity(array $disk): string
+{
+    foreach (['serial', 'wwn'] as $key) {
+        $v = trim((string) ($disk[$key] ?? ''));
+        if ($v !== '' && strtolower($v) !== 'unknown') {
+            return $v;
+        }
+    }
+
+    $model = trim((string) ($disk['model'] ?? 'unknown'));
+    if (strlen($model) > 28) {
+        return substr($model, 0, 12) . '…' . substr($model, -8);
+    }
+
+    return $model !== '' ? $model : 'unknown';
+}
+
+function proxmox_disk_display_label(array $disk): string
+{
+    $devpath = (string) ($disk['devpath'] ?? '');
+    $dev = $devpath !== '' ? basename($devpath) : 'disk';
+
+    return $dev . ' (' . proxmox_disk_identity($disk) . ')';
+}
+
 /**
  * @return list<array{devpath: string, label: string, temp: int, model: string}>
  */
@@ -215,14 +241,25 @@ function get_proxmox_disk_temperatures(?array $server = null): array
             continue;
         }
         $model = trim((string) ($disk['model'] ?? 'unknown'));
-        $label = $disk['label'] ?? (basename($devpath) . ' (' . $model . ')');
+        $label = proxmox_disk_display_label($disk);
         $result[] = [
             'devpath' => (string) $devpath,
-            'label'   => (string) $label,
+            'label'   => $label,
             'temp'    => (int) $temp,
             'model'   => $model,
+            'serial'  => trim((string) ($disk['serial'] ?? '')),
+            'wwn'     => trim((string) ($disk['wwn'] ?? '')),
         ];
     }
+
+    usort($result, static function (array $a, array $b): int {
+        $c = ($b['temp'] ?? 0) <=> ($a['temp'] ?? 0);
+        if ($c !== 0) {
+            return $c;
+        }
+
+        return strcmp($a['devpath'] ?? '', $b['devpath'] ?? '');
+    });
 
     return $result;
 }

@@ -14,6 +14,7 @@ require __DIR__ . '/lib/proxmox-disks.php';
 require __DIR__ . '/lib/ilo-zones.php';
 require __DIR__ . '/lib/ilo-thermal.php';
 require __DIR__ . '/lib/fan-control-sources.php';
+require __DIR__ . '/lib/auto-control-config.php';
 
 @ini_set('output_buffering', 'off');
 if (defined('STDOUT') && is_resource(STDOUT)) {
@@ -50,7 +51,7 @@ if ($serverConfig === null) {
     $serverId = $serverConfig['id'];
 }
 
-define('CONFIG_FILE', '/data/auto-control-' . $serverId . '.json');
+define('CONFIG_WRITE_FILE', auto_control_config_write_path($serverId));
 define('PID_FILE', __DIR__ . '/fan-daemon-' . $serverId . '.pid');
 
 function fan_daemon_process_running(int $pid, string $expectedServerId): bool
@@ -108,10 +109,12 @@ pcntl_signal(SIGINT, function () {
 
 function get_config()
 {
-    if (!file_exists(CONFIG_FILE)) {
+    global $serverId;
+    $configFile = resolve_auto_control_config_file($serverId);
+    if (!file_exists($configFile)) {
         return null;
     }
-    return json_decode(file_get_contents(CONFIG_FILE), true);
+    return json_decode(file_get_contents($configFile), true);
 }
 
 function calculate_fan_speed($temps, $profile)
@@ -201,7 +204,7 @@ function set_fan_speed($speed, $fanCount)
 echo "=== Fan Control Daemon Started (iLO + Proxmox disks) ===\n";
 echo "Server: $serverId ({$serverConfig['host']})\n";
 echo "PID: " . getmypid() . "\n";
-echo "Config file: " . CONFIG_FILE . "\n\n";
+echo "Config file: " . resolve_auto_control_config_file($serverId) . " (write: " . CONFIG_WRITE_FILE . ")\n\n";
 
 $lastSpeed = null;
 
@@ -216,7 +219,7 @@ while (true) {
             'iloHost' => $serverConfig['host'],
             'status' => 'waiting',
             'error' => 'config_missing',
-            'configFile' => CONFIG_FILE,
+            'configFile' => resolve_auto_control_config_file($serverId),
         ]);
         echo "[WARN] Config file not found, waiting...\n";
         sleep(10);

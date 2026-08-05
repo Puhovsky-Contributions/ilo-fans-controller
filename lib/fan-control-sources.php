@@ -97,30 +97,15 @@ function build_fan_control_temps_detailed(
     return ['temps' => $temps, 'bySource' => $bySource];
 }
 
-/** Whether a UI temperature group participates in auto fan speed (when auto is on). */
-function is_fan_control_group_active(string $section, string $zone, array $config): bool
+/** Whether a temperature group source is used in auto fan speed (when auto is on). */
+function is_fan_control_source_active(string $source, array $config): bool
 {
     $sources = get_fan_control_sources($config);
-    if ($section === 'pve') {
-        if ($zone === 'pve-cpu') {
-            return in_array('pve:cpu', $sources, true);
-        }
-        if ($zone === 'pve-disks') {
-            return in_array('pve:disks', $sources, true);
-        }
-
-        return false;
+    if (str_starts_with($source, 'ilo:') && in_array('ilo:all', $sources, true)) {
+        return true;
     }
 
-    if ($section === 'ilo') {
-        if (in_array('ilo:all', $sources, true)) {
-            return true;
-        }
-
-        return in_array('ilo:' . $zone, $sources, true);
-    }
-
-    return false;
+    return in_array($source, $sources, true);
 }
 
 function fan_daemon_log_json(array $payload): void
