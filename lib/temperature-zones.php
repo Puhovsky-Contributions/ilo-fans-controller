@@ -117,12 +117,20 @@ function temperature_group_shell(string $source): array
 
 function temperature_finalize_group(array &$group, array $autoConfig): void
 {
-    $sum = array_sum(array_column($group['sensors'], 'reading'));
-    $count = count($group['sensors']);
-    $group['avg'] = $count > 0 ? round($sum / $count, 1) : 0;
+    $activeSensors = array_values(array_filter(
+        $group['sensors'],
+        static fn (array $sensor): bool => !($sensor['ignored'] ?? false)
+    ));
+    $readings = array_column($activeSensors, 'reading');
+    $count = count($readings);
     $group['count'] = $count;
-    if ($group['min'] === PHP_INT_MAX) {
+    $group['avg'] = $count > 0 ? round(array_sum($readings) / $count, 1) : 0;
+    if ($count > 0) {
+        $group['min'] = min($readings);
+        $group['max'] = max($readings);
+    } else {
         $group['min'] = 0;
+        $group['max'] = 0;
     }
     $source = (string) ($group['source'] ?? '');
     if ($source === '' && isset($group['zone'])) {

@@ -11,6 +11,10 @@
 ## Review
 Summary + alert align with daemon max(). Per-disk ignore needs agent deploy for real serials (sysfs model ≠ serial).
 
+## Fix 2026-08-06
+- [x] Zone card avg/min/max/count → exclude `ignored` disks in `temperature_finalize_group`
+- [x] Expand zone → `sm:col-span-2` + grid `items-start` (no empty stretch in neighbor cell)
+
 ## How to test
 1. Card max matches hottest among 🏠 zones only (not ambient etc.)
 2. Click 🏠 → `fanControlSources` in saved JSON toggles
