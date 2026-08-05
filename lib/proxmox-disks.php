@@ -29,6 +29,116 @@ function get_proxmox_config(?array $server = null): ?array
     return ['host' => $host, 'node' => $node, 'token' => $token, 'port' => $port];
 }
 
+function get_proxmox_ssh_config(?array $server = null): ?array
+{
+    $host = trim($server['proxmoxSshHost'] ?? getenv('PROXMOX_SSH_HOST') ?: '');
+    if ($host === '') {
+        $api = get_proxmox_config($server);
+        $host = $api['host'] ?? '';
+    }
+
+    $user = trim($server['proxmoxSshUser'] ?? getenv('PROXMOX_SSH_USER') ?: '');
+    $password = (string) ($server['proxmoxSshPassword'] ?? getenv('PROXMOX_SSH_PASSWORD') ?: '');
+    $portRaw = $server['proxmoxSshPort'] ?? getenv('PROXMOX_SSH_PORT') ?: '22';
+    $port = (int) $portRaw;
+    if ($port <= 0 || $port > 65535) {
+        $port = 22;
+    }
+
+    if ($host === '' || $user === '' || $password === '') {
+        return null;
+    }
+
+    return [
+        'host' => $host,
+        'port' => $port,
+        'user' => $user,
+        'password' => $password,
+    ];
+}
+
+/**
+ * @return array{raw: ?string, meta: array<string, mixed>}
+ */
+function proxmox_run_sensors_over_ssh(?array $server = null): array
+{
+    $meta = [
+        'attempted' => false,
+        'ok' => false,
+        'method' => 'ssh',
+        'readingsCount' => 0,
+        'error' => null,
+        'sshHost' => null,
+    ];
+
+    if (!function_exists('ssh2_connect')) {
+        $meta['error'] = 'ssh2_extension_missing';
+
+        return ['raw' => null, 'meta' => $meta];
+    }
+
+    $sshCfg = get_proxmox_ssh_config($server);
+    if ($sshCfg === null) {
+        $meta['error'] = 'ssh_not_configured';
+
+        return ['raw' => null, 'meta' => $meta];
+    }
+
+    $meta['attempted'] = true;
+    $meta['sshHost'] = $sshCfg['host'] . ':' . $sshCfg['port'];
+
+    $ssh = @ssh2_connect($sshCfg['host'], $sshCfg['port']);
+    if ($ssh === false) {
+        $meta['error'] = 'ssh_connect_failed';
+
+        return ['raw' => null, 'meta' => $meta];
+    }
+
+    if (!@ssh2_auth_password($ssh, $sshCfg['user'], $sshCfg['password'])) {
+        $meta['error'] = 'ssh_auth_failed';
+
+        return ['raw' => null, 'meta' => $meta];
+    }
+
+    $stream = @ssh2_exec($ssh, 'sensors -j 2>/dev/null || sensors');
+    if ($stream === false) {
+        $meta['error'] = 'ssh_exec_failed';
+
+        return ['raw' => null, 'meta' => $meta];
+    }
+
+    stream_set_blocking($stream, true);
+    $raw = stream_get_contents($stream);
+    fclose($stream);
+
+    if (!is_string($raw) || trim($raw) === '') {
+        $meta['error'] = 'ssh_empty_output';
+
+        return ['raw' => null, 'meta' => $meta];
+    }
+
+    $meta['ok'] = true;
+
+    return ['raw' => $raw, 'meta' => $meta];
+}
+
+/**
+ * @param list<array{name: string, temp: int}> $readings
+ * @param array<string, mixed> $meta
+ * @return array{readings: list<array{name: string, temp: int}>, cpuSensors: array<string, mixed>}
+ */
+function proxmox_host_cpu_result(array $readings, array $meta): array
+{
+    $meta['readingsCount'] = count($readings);
+    $meta['ok'] = $readings !== [] && ($meta['error'] ?? null) === null;
+    if ($readings === [] && ($meta['error'] ?? null) === null) {
+        $meta['error'] = 'sensors_output_unparsed';
+        $meta['ok'] = false;
+    }
+
+    return ['readings' => $readings, 'cpuSensors' => $meta];
+}
+
 function parse_disk_smart_temperature(array $smart): ?int
 {
     $text = $smart['text'] ?? '';
@@ -221,43 +331,29 @@ function parse_coretemp_from_sensors_text(string $text): array
 }
 
 /**
- * Host CPU temps from lm-sensors on the PVE node (coretemp Package + Cores).
- * POST /nodes/{node}/execute requires Sys.Mod on that node (PVEAuditor is not enough).
+ * Host CPU temps from lm-sensors on the PVE node (coretemp Package + Cores) via SSH.
  *
- * @return array{readings: list<array{name: string, temp: int}>, execute: array<string, mixed>}
+ * @return array{readings: list<array{name: string, temp: int}>, cpuSensors: array<string, mixed>}
  */
 function get_proxmox_host_cpu_temperatures(?array $server = null): array
 {
-    $meta = [
-        'attempted' => false,
-        'ok' => false,
-        'readingsCount' => 0,
-        'requiredPrivilege' => 'Sys.Mod',
-        'apiPath' => null,
-        'error' => null,
-    ];
-
-    $cfg = get_proxmox_config($server);
-    if ($cfg === null) {
-        $meta['error'] = 'proxmox_not_configured';
-
-        return ['readings' => [], 'execute' => $meta];
+    if (get_proxmox_config($server) === null) {
+        return proxmox_host_cpu_result([], [
+            'attempted' => false,
+            'ok' => false,
+            'method' => 'ssh',
+            'readingsCount' => 0,
+            'error' => 'proxmox_not_configured',
+            'sshHost' => null,
+        ]);
     }
 
-    $meta['attempted'] = true;
-    $meta['apiPath'] = '/nodes/' . $cfg['node'] . '/execute';
+    $sshResult = proxmox_run_sensors_over_ssh($server);
+    $meta = $sshResult['meta'];
+    $raw = $sshResult['raw'];
 
-    $raw = proxmox_execute_command($cfg, 'sensors -j 2>/dev/null || sensors');
-    if ($raw === null || trim($raw) === '') {
-        $apiErr = proxmox_last_api_error();
-        if ($apiErr !== null && ($apiErr['httpCode'] ?? 0) === 403) {
-            $meta['error'] = 'permission_denied_sys_mod_required';
-        } else {
-            $meta['error'] = 'execute_failed_or_empty_output';
-        }
-        $meta['apiError'] = $apiErr;
-
-        return ['readings' => [], 'execute' => $meta];
+    if ($raw === null) {
+        return proxmox_host_cpu_result([], $meta);
     }
 
     $trimmed = ltrim($raw);
@@ -269,13 +365,11 @@ function get_proxmox_host_cpu_temperatures(?array $server = null): array
         $readings = parse_coretemp_from_sensors_text($raw);
     }
 
-    $meta['readingsCount'] = count($readings);
-    $meta['ok'] = $readings !== [];
-    if (!$meta['ok']) {
-        $meta['error'] = 'sensors_output_unparsed';
+    if ($readings !== []) {
+        $meta['error'] = null;
     }
 
-    return ['readings' => $readings, 'execute' => $meta];
+    return proxmox_host_cpu_result($readings, $meta);
 }
 
 /**

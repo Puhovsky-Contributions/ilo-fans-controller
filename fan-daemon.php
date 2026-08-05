@@ -262,8 +262,13 @@ while (true) {
     }
 
     $pveCfg = get_proxmox_config($serverConfig);
+    $cpuSensorsMeta = $pveCpuResult['cpuSensors'] ?? null;
+    $warnings = [];
+    if (in_array('pve:cpu', get_fan_control_sources($config), true) && $pveCpuReadings === []) {
+        $warnings[] = 'pve_cpu:' . (($cpuSensorsMeta ?? [])['error'] ?? 'unavailable');
+    }
 
-    fan_daemon_log_json([
+    $logPayload = [
         'serverId' => $serverId,
         'iloHost' => $serverConfig['host'],
         'proxmox' => $pveCfg !== null ? [
@@ -291,7 +296,7 @@ while (true) {
         ],
         'pve' => [
             'cpu' => $pveCpuReadings,
-            'cpuSensors' => $pveCpuResult['cpuSensors'],
+            'cpuSensors' => $cpuSensorsMeta,
             'disks' => $diskReadings,
         ],
         'fanCalc' => [
@@ -310,7 +315,11 @@ while (true) {
             'ambientThresholdC' => 40,
         ],
         'checkIntervalSec' => $config['checkInterval'] ?? 30,
-    ]);
+    ];
+    if ($warnings !== []) {
+        $logPayload['warnings'] = $warnings;
+    }
+    fan_daemon_log_json($logPayload);
 
     if ($profileForced) {
         echo "[" . date('H:i:s') . "] SAFETY: Ambient {$ambientTemp}°C > 40°C, forcing Normal profile\n";

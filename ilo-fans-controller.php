@@ -162,6 +162,22 @@ function get_temperatures($server)
 			$pveCpuGroup['max'] = max($pveCpuGroup['max'], $temp);
 		}
 		$pveGroups[] = $pveCpuGroup;
+	} elseif (get_proxmox_config($server) !== null) {
+		$cpuMeta = $pveCpuResult['cpuSensors'] ?? [];
+		$pveGroups[] = [
+			'zone' => 'pve-cpu',
+			'section' => 'pve',
+			'icon' => 'H',
+			'label' => 'Host CPU (coretemp)',
+			'color' => 'violet',
+			'badgeClass' => 'bg-violet-500',
+			'sensors' => [],
+			'avg' => 0,
+			'min' => PHP_INT_MAX,
+			'max' => 0,
+			'maxCritical' => 100,
+			'fetchError' => $cpuMeta['error'] ?? 'unknown',
+		];
 	}
 
 	$diskReadings = get_proxmox_disk_temperatures($server);
@@ -826,6 +842,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						<!-- Sensors Details (collapsible) -->
 						<div x-show="open" x-collapse>
 							<div class="p-2 space-y-1 dark:bg-gray-925 bg-gray-25">
+								<p x-show="group.fetchError" class="text-xs text-amber-600 dark:text-amber-400 px-2 py-1">
+									<span class="font-medium">Unavailable:</span>
+									<span x-text="group.fetchError"></span>
+								</p>
 								<template x-for="sensor in group.sensors" :key="sensor.name">
 									<div class="flex items-center justify-between py-1 px-2 rounded dark:hover:bg-gray-900 hover:bg-gray-50">
 										<span class="text-xs dark:text-gray-500 text-gray-600 truncate mr-2" x-text="sensor.name"></span>
