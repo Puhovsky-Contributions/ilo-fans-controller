@@ -5,16 +5,18 @@
     "host": "10.10.9.110",
     "username": "admin",
     "password": "secret",
+    "passwordFile": "/data/secrets/ilo-password-server1",
     "minimumFanSpeed": 10,
     "proxmoxAgentUrl": "http://172.16.0.10:9847",
-    "proxmoxAgentToken": "your-agent-bearer-token"
+    "proxmoxAgentToken": "your-agent-bearer-token",
+    "proxmoxAgentTokenFile": "/data/secrets/proxmox-agent-token"
   },
   {
     "id": "server2",
     "name": "Secondary Server",
     "host": "10.10.9.111",
     "username": "admin",
-    "password": "secret",
+    "passwordFile": "/data/secrets/ilo-password-server2",
     "minimumFanSpeed": 10
   }
 ]

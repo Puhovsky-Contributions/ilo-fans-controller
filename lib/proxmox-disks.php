@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/env-secrets.php';
+
 /**
  * Proxmox host temperatures via ilo-fans-agent-pve HTTP agent.
  * GET /v1/thermal with Bearer token — cpu[] and disks[] (IFC-compatible shapes).
@@ -7,8 +9,8 @@
 
 function get_proxmox_config(?array $server = null): ?array
 {
-    $url = trim($server['proxmoxAgentUrl'] ?? getenv('PROXMOX_AGENT_URL') ?: '');
-    $token = trim($server['proxmoxAgentToken'] ?? getenv('PROXMOX_AGENT_TOKEN') ?: '');
+    $url = trim($server['proxmoxAgentUrl'] ?? ifc_env('PROXMOX_AGENT_URL') ?? '');
+    $token = trim($server['proxmoxAgentToken'] ?? ifc_env('PROXMOX_AGENT_TOKEN') ?? '');
 
     if ($url === '' || $token === '') {
         return null;

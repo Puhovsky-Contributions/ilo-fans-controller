@@ -1,4 +1,8 @@
-# Fix: custom server ids + POST hang + supervisord
+## Secrets via files
+- [x] `lib/env-secrets.php` — `ifc_env()`, `ifc_read_secret_file()`, `ifc_resolve_server_secrets()`
+- [x] `config.inc.php.env` — `ILO_*` via `ifc_env`; `get_servers()` resolves `passwordFile` / `proxmoxAgentTokenFile`
+- [x] `lib/proxmox-disks.php` — agent token from `ifc_env`
+- [x] README, `.env.example`, `docker-compose.yml`, `servers.json.example`, `.gitignore` (`secrets/`)
 
 ## Track D — supervisord
 - [x] `docker/generate-supervisor-daemons.php` — get_servers(), cap 5, sanitize program name

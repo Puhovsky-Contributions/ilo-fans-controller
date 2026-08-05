@@ -11,6 +11,7 @@ tailwind.config.js
 config.inc.php
 .env
 servers.json
+secrets/
 
 # Runtime files
 *.pid

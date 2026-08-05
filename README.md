@@ -39,6 +39,7 @@
 - Fan daemon + UI read **host CPU** (`sensors` / `pve:cpu`) and **disk SMART** (`pve:disks`) from **[ilo-fans-agent-pve](https://github.com/playtika/ilo-fans-agent-pve)** on each PVE node (HTTP on SDN IP, no TLS)
 - IFC calls `GET /v1/thermal` with Bearer token — no Proxmox API token or SSH to PVE
 - Configure via env (`PROXMOX_AGENT_URL`, `PROXMOX_AGENT_TOKEN`) or per-server `proxmoxAgentUrl` / `proxmoxAgentToken` in `/data/servers.json`
+- Secrets: set value in env **or** path in `{NAME}_FILE` (e.g. `ILO_PASSWORD_FILE=/run/secrets/ilo_password`); in `servers.json` use `passwordFile` / `proxmoxAgentTokenFile` instead of inline strings
 - Fan daemon: `fanControlSources` in `auto-control.json` (see `__doc_fanControlSources` and `lib/fan-control-sources.php`):
   - **Proxmox:** `pve:cpu`, `pve:disks`
   - **iLO zones:** `ilo:all`, `ilo:ambient`, `ilo:cpu`, `ilo:memory`, `ilo:vr`, `ilo:storage`, `ilo:power`, `ilo:chipset`, `ilo:pci`, `ilo:other`
@@ -100,9 +101,33 @@ volumes:
 |----------|-------------|---------|
 | `ILO_HOST` | IP address of your iLO interface | *required* |
 | `ILO_USERNAME` | iLO username | *required* |
-| `ILO_PASSWORD` | iLO password | *required* |
+| `ILO_PASSWORD` | iLO password | *required* (or `ILO_PASSWORD_FILE`) |
 | `MINIMUM_FAN_SPEED` | Minimum allowed fan speed (%) | `10` |
 | `AUTO_DAEMON` | Enable background auto-control daemon | `true` |
+| `PROXMOX_AGENT_URL` | Base URL of ilo-fans-agent-pve | optional |
+| `PROXMOX_AGENT_TOKEN` | Bearer token for the agent | optional (or `PROXMOX_AGENT_TOKEN_FILE`) |
+
+For any of `ILO_HOST`, `ILO_USERNAME`, `ILO_PASSWORD`, `PROXMOX_AGENT_URL`, `PROXMOX_AGENT_TOKEN` you can set **`VAR_FILE`** to a readable path instead of `VAR` (Docker Swarm/Kubernetes secrets, bind-mount under `/data/secrets/`, etc.). File content is trimmed of trailing newlines.
+
+Example with Docker Compose secrets:
+
+```yaml
+services:
+  ilo-fans-controller:
+    environment:
+      ILO_HOST: '10.0.0.5'
+      ILO_USERNAME: 'Administrator'
+      ILO_PASSWORD_FILE: /run/secrets/ilo_password
+      PROXMOX_AGENT_TOKEN_FILE: /run/secrets/proxmox_agent_token
+    secrets:
+      - ilo_password
+      - proxmox_agent_token
+secrets:
+  ilo_password:
+    file: ./secrets/ilo_password.txt
+  proxmox_agent_token:
+    file: ./secrets/proxmox_agent_token.txt
+```
 
 ### Multi-server: HTTP index vs daemon `id`
 
@@ -119,14 +144,16 @@ Example `servers.json` with custom ids:
     "name": "WAW01",
     "host": "192.168.1.10",
     "username": "Administrator",
-    "password": "secret"
+    "passwordFile": "/data/secrets/server1-ilo-password"
   },
   {
     "id": "lab-g9",
     "name": "Lab DL360 G9",
     "host": "192.168.1.11",
     "username": "Administrator",
-    "password": "secret"
+    "password": "secret",
+    "proxmoxAgentUrl": "http://172.16.0.10:9847",
+    "proxmoxAgentTokenFile": "/data/secrets/proxmox-agent-token"
   }
 ]
 ```

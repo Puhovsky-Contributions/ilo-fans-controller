@@ -7,13 +7,25 @@ services:
       ILO_HOST: '${ILO_HOST}'
       ILO_USERNAME: '${ILO_USERNAME}'
       ILO_PASSWORD: '${ILO_PASSWORD}'
+      # Or mount secrets and set *_FILE instead of plain env (see README):
+      # ILO_PASSWORD_FILE: /run/secrets/ilo_password
       MINIMUM_FAN_SPEED: '${MINIMUM_FAN_SPEED}'
       AUTO_DAEMON: '${AUTO_DAEMON}'
       PROXMOX_AGENT_URL: '${PROXMOX_AGENT_URL:-}'
       PROXMOX_AGENT_TOKEN: '${PROXMOX_AGENT_TOKEN:-}'
+      # PROXMOX_AGENT_TOKEN_FILE: /run/secrets/proxmox_agent_token
     volumes:
       - ilo-fans-data:/data
     restart: unless-stopped          # plain Docker equivalent
+    # secrets:
+    #   - ilo_password
+    #   - proxmox_agent_token
+
+# secrets:
+#   ilo_password:
+#     file: ./secrets/ilo_password.txt
+#   proxmox_agent_token:
+#     file: ./secrets/proxmox_agent_token.txt
 
 volumes:
   ilo-fans-data:
