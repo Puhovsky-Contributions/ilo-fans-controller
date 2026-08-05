@@ -746,11 +746,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					<h2 class="text-sm font-semibold uppercase tracking-wide dark:text-gray-500 text-gray-500 mb-2" x-text="section.label"></h2>
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 items-start">
 						<template x-for="group in (section.groups || [])" :key="group.source">
-							<div x-data="{ open: false }" class="rounded-lg dark:bg-gray-900 bg-gray-50 border dark:border-gray-875 border-gray-150 overflow-hidden transition-[grid-column] duration-200"
-								:class="[
-									group.fanControlActive && $store.autoControl.config.enabled ? 'ring-1 ring-emerald-500/40 dark:ring-emerald-500/30' : '',
-									open ? 'sm:col-span-2' : '',
-								]">
+							<div x-data="{ open: false }" class="rounded-lg dark:bg-gray-900 bg-gray-50 border dark:border-gray-875 border-gray-150 overflow-hidden"
+								:class="group.fanControlActive && $store.autoControl.config.enabled ? 'ring-1 ring-emerald-500/40 dark:ring-emerald-500/30' : ''">
 								<div class="p-2.5 cursor-pointer select-none flex items-center justify-between gap-2"
 									@click="open = !open"
 									:class="open ? 'dark:bg-gray-875 bg-gray-100' : ''">

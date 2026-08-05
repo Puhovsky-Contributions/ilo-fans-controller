@@ -13,7 +13,7 @@ Summary + alert align with daemon max(). Per-disk ignore needs agent deploy for 
 
 ## Fix 2026-08-06
 - [x] Zone card avg/min/max/count → exclude `ignored` disks in `temperature_finalize_group`
-- [x] Expand zone → `sm:col-span-2` + grid `items-start` (no empty stretch in neighbor cell)
+- [x] Grid `items-start` only (neighbor card no stretch on expand); no col-span
 
 ## How to test
 1. Card max matches hottest among 🏠 zones only (not ambient etc.)
