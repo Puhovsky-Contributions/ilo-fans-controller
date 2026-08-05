@@ -15,7 +15,8 @@ require __DIR__ . '/lib/ilo-zones.php';
 require __DIR__ . '/lib/ilo-thermal.php';
 require __DIR__ . '/lib/fan-control-sources.php';
 
-$serverId = $argv[1] ?? 'default';
+$requestedId = isset($argv[1]) ? (string) $argv[1] : null;
+$serverId = $requestedId ?? 'default';
 
 // Load matching server config
 $servers = get_servers();
@@ -26,22 +27,64 @@ foreach ($servers as $s) {
         break;
     }
 }
-// Fall back to first server if ID not found (e.g. legacy 'default')
+
 if ($serverConfig === null) {
-    $serverConfig = $servers[0];
+    if ($requestedId !== null && $requestedId !== 'default') {
+        fan_daemon_log_json([
+            'serverId' => $requestedId,
+            'status' => 'skipped',
+            'reason' => 'server_not_in_servers_json',
+            'hint' => 'Add server to /data/servers.json or disable this supervisord program',
+        ]);
+        echo "Server {$requestedId} not in servers.json — supervisor slot idle (exit 0)\n";
+        exit(0);
+    }
+    $serverConfig = $servers[0] ?? null;
+    if ($serverConfig === null) {
+        fan_daemon_log_json([
+            'status' => 'error',
+            'error' => 'no_servers_configured',
+        ]);
+        echo "[ERROR] No servers configured\n";
+        exit(1);
+    }
     $serverId = $serverConfig['id'];
 }
 
 define('CONFIG_FILE', '/data/auto-control-' . $serverId . '.json');
 define('PID_FILE', __DIR__ . '/fan-daemon-' . $serverId . '.pid');
 
+function fan_daemon_process_running(int $pid, string $expectedServerId): bool
+{
+    if ($pid <= 0 || !posix_kill($pid, 0)) {
+        return false;
+    }
+    $cmdline = @file_get_contents("/proc/{$pid}/cmdline");
+    if ($cmdline === false) {
+        return true;
+    }
+    $cmdline = str_replace("\0", ' ', $cmdline);
+    if (!str_contains($cmdline, 'fan-daemon.php')) {
+        return false;
+    }
+
+    return str_contains($cmdline, $expectedServerId);
+}
+
 // Check if already running
 if (file_exists(PID_FILE)) {
-    $pid = (int) file_get_contents(PID_FILE);
-    if (posix_kill($pid, 0)) {
+    $pid = (int) trim((string) file_get_contents(PID_FILE));
+    if (fan_daemon_process_running($pid, $serverId)) {
+        fan_daemon_log_json([
+            'serverId' => $serverId,
+            'status' => 'skipped',
+            'reason' => 'already_running',
+            'pid' => $pid,
+        ]);
         echo "Daemon already running with PID $pid\n";
-        exit(1);
+        exit(0);
     }
+    @unlink(PID_FILE);
 }
 
 // Write PID file
@@ -199,7 +242,8 @@ while (true) {
     $fanCount = $iloData['fanCount'] ?: 8;
 
     $diskReadings = get_proxmox_disk_temperatures($serverConfig);
-    $pveCpuReadings = get_proxmox_host_cpu_temperatures($serverConfig);
+    $pveCpuResult = get_proxmox_host_cpu_temperatures($serverConfig);
+    $pveCpuReadings = $pveCpuResult['readings'];
 
     // Safety: Force Normal profile if ambient > 40°C
     if ($ambientTemp !== null && $ambientTemp > 40 && in_array($profileName, ['silence', 'silent'], true)) {
@@ -253,6 +297,7 @@ while (true) {
         ],
         'pve' => [
             'cpu' => $pveCpuReadings,
+            'cpuSensors' => $pveCpuResult['cpuSensors'],
             'disks' => $diskReadings,
         ],
         'fanCalc' => [

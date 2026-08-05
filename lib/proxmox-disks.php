@@ -103,15 +103,34 @@ function proxmox_api_post(array $cfg, string $path, array $form): mixed
     $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
     if (!$body || $httpCode !== 200) {
+        $GLOBALS['proxmox_api_last_error'] = [
+            'httpCode' => $httpCode,
+            'path' => $path,
+            'bodySnippet' => is_string($body) ? substr($body, 0, 500) : null,
+        ];
+
         return null;
     }
 
     $decoded = json_decode($body, true);
     if (!is_array($decoded) || !array_key_exists('data', $decoded)) {
+        $GLOBALS['proxmox_api_last_error'] = [
+            'httpCode' => $httpCode,
+            'path' => $path,
+            'bodySnippet' => is_string($body) ? substr($body, 0, 500) : null,
+        ];
+
         return null;
     }
 
+    unset($GLOBALS['proxmox_api_last_error']);
+
     return $decoded['data'];
+}
+
+function proxmox_last_api_error(): ?array
+{
+    return $GLOBALS['proxmox_api_last_error'] ?? null;
 }
 
 function proxmox_execute_command(array $cfg, string $command): ?string
@@ -203,31 +222,60 @@ function parse_coretemp_from_sensors_text(string $text): array
 
 /**
  * Host CPU temps from lm-sensors on the PVE node (coretemp Package + Cores).
- * Requires API token permission for POST /nodes/{node}/execute (e.g. Sys.Mod).
+ * POST /nodes/{node}/execute requires Sys.Mod on that node (PVEAuditor is not enough).
  *
- * @return list<array{name: string, temp: int}>
+ * @return array{readings: list<array{name: string, temp: int}>, execute: array<string, mixed>}
  */
 function get_proxmox_host_cpu_temperatures(?array $server = null): array
 {
+    $meta = [
+        'attempted' => false,
+        'ok' => false,
+        'readingsCount' => 0,
+        'requiredPrivilege' => 'Sys.Mod',
+        'apiPath' => null,
+        'error' => null,
+    ];
+
     $cfg = get_proxmox_config($server);
     if ($cfg === null) {
-        return [];
+        $meta['error'] = 'proxmox_not_configured';
+
+        return ['readings' => [], 'execute' => $meta];
     }
+
+    $meta['attempted'] = true;
+    $meta['apiPath'] = '/nodes/' . $cfg['node'] . '/execute';
 
     $raw = proxmox_execute_command($cfg, 'sensors -j 2>/dev/null || sensors');
     if ($raw === null || trim($raw) === '') {
-        return [];
+        $apiErr = proxmox_last_api_error();
+        if ($apiErr !== null && ($apiErr['httpCode'] ?? 0) === 403) {
+            $meta['error'] = 'permission_denied_sys_mod_required';
+        } else {
+            $meta['error'] = 'execute_failed_or_empty_output';
+        }
+        $meta['apiError'] = $apiErr;
+
+        return ['readings' => [], 'execute' => $meta];
     }
 
     $trimmed = ltrim($raw);
+    $readings = [];
     if ($trimmed !== '' && $trimmed[0] === '{') {
         $readings = parse_coretemp_from_sensors_json($raw);
-        if ($readings !== []) {
-            return $readings;
-        }
+    }
+    if ($readings === []) {
+        $readings = parse_coretemp_from_sensors_text($raw);
     }
 
-    return parse_coretemp_from_sensors_text($raw);
+    $meta['readingsCount'] = count($readings);
+    $meta['ok'] = $readings !== [];
+    if (!$meta['ok']) {
+        $meta['error'] = 'sensors_output_unparsed';
+    }
+
+    return ['readings' => $readings, 'execute' => $meta];
 }
 
 /**

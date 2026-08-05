@@ -9,7 +9,11 @@
     "proxmoxHost": "10.10.9.50",
     "proxmoxNode": "waw01-pve",
     "proxmoxPort": 8006,
-    "proxmoxApiToken": "user@pam!ifc=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    "proxmoxApiToken": "user@pam!ifc=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "proxmoxSshHost": "10.10.9.50",
+    "proxmoxSshPort": 22,
+    "proxmoxSshUser": "root",
+    "proxmoxSshPassword": "ssh-secret"
   },
   {
     "id": "server2",

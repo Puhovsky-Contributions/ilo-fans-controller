@@ -57,15 +57,15 @@ function get_fans($server)
 
 function get_zone_info($zone) {
 	$zoneInfos = [
-		'ambient' => ['icon' => 'A', 'label' => 'Ambient', 'color' => 'sky'],
-		'cpu' => ['icon' => 'C', 'label' => 'CPUs', 'color' => 'violet'],
-		'memory' => ['icon' => 'M', 'label' => 'Memory', 'color' => 'pink'],
-		'vr' => ['icon' => 'V', 'label' => 'Regulators', 'color' => 'amber'],
-		'storage' => ['icon' => 'S', 'label' => 'Storage', 'color' => 'blue'],
-		'power' => ['icon' => 'P', 'label' => 'Power Supply', 'color' => 'green'],
-		'chipset' => ['icon' => 'I', 'label' => 'Chipset / iLO', 'color' => 'orange'],
-		'pci' => ['icon' => 'X', 'label' => 'PCI Slots', 'color' => 'indigo'],
-		'other' => ['icon' => '?', 'label' => 'Other', 'color' => 'gray'],
+		'ambient' => ['icon' => 'A', 'label' => 'Ambient', 'color' => 'sky', 'badgeClass' => 'bg-sky-500'],
+		'cpu' => ['icon' => 'C', 'label' => 'CPUs', 'color' => 'violet', 'badgeClass' => 'bg-violet-500'],
+		'memory' => ['icon' => 'M', 'label' => 'Memory', 'color' => 'pink', 'badgeClass' => 'bg-pink-500'],
+		'vr' => ['icon' => 'V', 'label' => 'Regulators', 'color' => 'amber', 'badgeClass' => 'bg-amber-500'],
+		'storage' => ['icon' => 'S', 'label' => 'Storage', 'color' => 'blue', 'badgeClass' => 'bg-blue-500'],
+		'power' => ['icon' => 'P', 'label' => 'Power Supply', 'color' => 'green', 'badgeClass' => 'bg-green-500'],
+		'chipset' => ['icon' => 'I', 'label' => 'Chipset / iLO', 'color' => 'orange', 'badgeClass' => 'bg-orange-500'],
+		'pci' => ['icon' => 'X', 'label' => 'PCI Slots', 'color' => 'indigo', 'badgeClass' => 'bg-indigo-500'],
+		'other' => ['icon' => '?', 'label' => 'Other', 'color' => 'gray', 'badgeClass' => 'bg-gray-500'],
 	];
 	return $zoneInfos[$zone] ?? $zoneInfos['other'];
 }
@@ -106,6 +106,7 @@ function get_temperatures($server)
 							'icon' => $zoneInfo['icon'],
 							'label' => $zoneInfo['label'],
 							'color' => $zoneInfo['color'],
+							'badgeClass' => $zoneInfo['badgeClass'],
 							'sensors' => [],
 							'avg' => 0,
 							'min' => PHP_INT_MAX,
@@ -132,7 +133,8 @@ function get_temperatures($server)
 
 	$pveGroups = [];
 
-	$pveCpuReadings = get_proxmox_host_cpu_temperatures($server);
+	$pveCpuResult = get_proxmox_host_cpu_temperatures($server);
+	$pveCpuReadings = $pveCpuResult['readings'];
 	if (!empty($pveCpuReadings)) {
 		$pveCpuGroup = [
 			'zone' => 'pve-cpu',
@@ -140,6 +142,7 @@ function get_temperatures($server)
 			'icon' => 'H',
 			'label' => 'Host CPU (coretemp)',
 			'color' => 'violet',
+			'badgeClass' => 'bg-violet-500',
 			'sensors' => [],
 			'avg' => 0,
 			'min' => PHP_INT_MAX,
@@ -167,6 +170,7 @@ function get_temperatures($server)
 			'icon' => 'S',
 			'label' => 'Disks (SMART)',
 			'color' => 'blue',
+			'badgeClass' => 'bg-blue-500',
 			'sensors' => [],
 			'avg' => 0,
 			'min' => PHP_INT_MAX,
@@ -443,6 +447,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 			/* https://tailwindcss.com/docs/dark-mode#toggling-dark-mode-manually */
 			@custom-variant dark (&:where(.dark, .dark *));
 
+			@source inline("bg-sky-500 bg-violet-500 bg-pink-500 bg-amber-500 bg-blue-500 bg-green-500 bg-orange-500 bg-indigo-500 bg-gray-500");
+
 			@theme {
 				--font-sans: "DM Sans", sans-serif;
 				--font-mono: "JetBrains Mono", monospace;
@@ -578,24 +584,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 			</div>
 		</div>
 
-		<!-- Server Summary Cards (only when multiple servers) -->
-		<template x-if="$store.servers.list.length > 1">
+		<!-- Server summary (always visible) -->
+		<template x-if="$store.servers.list.length >= 1">
 			<div class="flex gap-3 overflow-x-auto pb-2 mb-3">
 				<template x-for="(server, i) in $store.servers.list" :key="server.id">
-					<div class="flex-shrink-0 rounded-lg border-2 p-3 cursor-pointer transition-colors min-w-[180px]"
-						:class="$store.servers.summary(i).isAlert
-							? 'border-red-500 bg-red-500/5 dark:bg-red-500/5'
-							: i === $store.servers.active
-								? 'border-emerald-500 bg-emerald-500/5 dark:border-emerald-500 dark:bg-emerald-500/5'
-								: 'dark:border-gray-875 border-gray-175 dark:bg-gray-900/50 bg-gray-50'"
-						@click="$store.servers.active = i">
+					<div class="flex-shrink-0 rounded-lg border-2 p-3 transition-colors min-w-[200px]"
+						:class="[
+							$store.servers.summary(i).isAlert
+								? 'border-red-500 bg-red-500/5 dark:bg-red-500/5'
+								: i === $store.servers.active
+									? 'border-emerald-500 bg-emerald-500/5 dark:border-emerald-500 dark:bg-emerald-500/5'
+									: 'dark:border-gray-875 border-gray-175 dark:bg-gray-900/50 bg-gray-50',
+							$store.servers.list.length > 1 ? 'cursor-pointer' : ''
+						]"
+						@click="$store.servers.list.length > 1 && ($store.servers.active = i)">
 						<p class="font-semibold dark:text-white text-black text-sm" x-text="server.name"></p>
 						<p class="text-xs dark:text-gray-500 text-gray-400 mb-2" x-text="$store.servers.summary(i).profileLabel"></p>
 						<p class="text-3xl font-mono font-bold"
 							:class="$store.servers.summary(i).isAlert ? 'text-red-500' : 'dark:text-emerald-400 text-emerald-600'"
 							x-text="$store.servers.summary(i).maxTemp + '°C'"></p>
-						<p class="text-xs dark:text-gray-500 text-gray-400" x-text="$store.servers.summary(i).sensor"></p>
-						<p class="text-xs dark:text-gray-600 text-gray-350 mt-1" x-text="'Fans avg: ' + $store.servers.summary(i).avgFan + '%'"></p>
+						<p class="text-xs dark:text-gray-500 text-gray-400 truncate" x-text="$store.servers.summary(i).sensor"></p>
+						<p class="text-xs dark:text-gray-600 text-gray-500 mt-2" x-text="$store.servers.summary(i).fansDetail"></p>
+						<p class="text-xs dark:text-gray-600 text-gray-400 mt-0.5" x-text="'Avg fan: ' + $store.servers.summary(i).avgFan + '%'"></p>
 					</div>
 				</template>
 			</div>
@@ -744,19 +754,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 			<!-- Grouped Zones View -->
 			<template x-for="section in ($store.temperatures.data.sections || [])" :key="section.id">
-				<h2 class="text-sm font-semibold uppercase tracking-wide dark:text-gray-500 text-gray-500 mt-4 mb-2 first:mt-0" x-text="section.label"></h2>
-				<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-				<template x-for="group in section.groups" :key="section.id + '-' + group.zone">
-					<div x-data="{ open: false }" class="rounded-lg dark:bg-gray-900 bg-gray-50 border dark:border-gray-875 border-gray-150 overflow-hidden"
-						:class="group.fanControlActive && $store.autoControl.config.enabled ? 'ring-1 ring-emerald-500/40 dark:ring-emerald-500/30' : ''">
-						<!-- Zone Header (clickable) -->
-						<div class="p-2.5 cursor-pointer select-none flex items-center justify-between"
-							@click="open = !open"
-							:class="open ? 'dark:bg-gray-875 bg-gray-100' : ''">
-							<div class="flex items-center space-x-2 min-w-0">
-								<span class="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-white shrink-0"
-									:class="'bg-' + group.color + '-500'"
-									x-text="group.icon"></span>
+				<div class="mb-4">
+					<h2 class="text-sm font-semibold uppercase tracking-wide dark:text-gray-500 text-gray-500 mb-2" x-text="section.label"></h2>
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+						<template x-for="group in (section.groups || [])" :key="section.id + '-' + group.zone">
+							<div x-data="{ open: false }" class="rounded-lg dark:bg-gray-900 bg-gray-50 border dark:border-gray-875 border-gray-150 overflow-hidden"
+								:class="group.fanControlActive && $store.autoControl.config.enabled ? 'ring-1 ring-emerald-500/40 dark:ring-emerald-500/30' : ''">
+								<div class="p-2.5 cursor-pointer select-none flex items-center justify-between"
+									@click="open = !open"
+									:class="open ? 'dark:bg-gray-875 bg-gray-100' : ''">
+									<div class="flex items-center space-x-2 min-w-0">
+										<span class="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold text-white shrink-0"
+											:class="group.badgeClass || 'bg-gray-500'"
+											x-text="group.icon"></span>
 								<span class="font-medium text-sm dark:text-gray-200 text-gray-800 truncate" x-text="group.label"></span>
 								<span class="text-xs dark:text-gray-600 text-gray-400 shrink-0" x-text="'(' + group.count + ')'"></span>
 								<span x-show="group.fanControlActive && $store.autoControl.config.enabled"
@@ -810,7 +820,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 							</div>
 						</div>
 					</div>
-				</template>
+						</template>
+					</div>
 				</div>
 			</template>
 		</div>
@@ -960,14 +971,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						{ reading: 0, name: '—' }
 					);
 					const profile = s.autoControl?.profiles?.[s.autoControl?.profile];
-					const fanValues = Object.values(s.fans);
+					const fanValues = Object.values(s.fans || {});
 					const avgFan = fanValues.length
 						? Math.round(fanValues.reduce((a, b) => a + b, 0) / fanValues.length)
 						: 0;
+					const fansDetail = Object.entries(s.fans || {})
+						.map(([name, speed]) => `${name}: ${speed}%`)
+						.join(' · ') || '—';
 					return {
 						maxTemp:      hottest.reading,
 						sensor:       hottest.name,
 						avgFan,
+						fansDetail,
 						profileLabel: profile?.label ?? 'Manual',
 						isAlert:      profile ? hottest.reading >= profile.maxTemp : false,
 					};

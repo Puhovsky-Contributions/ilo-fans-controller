@@ -42,7 +42,13 @@
   - **iLO zones:** `ilo:all`, `ilo:ambient`, `ilo:cpu`, `ilo:memory`, `ilo:vr`, `ilo:storage`, `ilo:power`, `ilo:chipset`, `ilo:pci`, `ilo:other`
   - Default skips `ilo:cpu` when iLO CPU reads stuck (~40°C); uses `pve:cpu` + DIMM/VR/PCI + disk SMART
   - Daemon emits **one JSON line per tick** to stdout (for Loki/ELK/etc.)
-- Token format: `user@pam!tokenname=uuid` (role needs `Sys.Audit` on node, disk read)
+- **Proxmox API token** (`pve:disks`): `disks/list` + `disks/smart` — **PVEAuditor** on the node is usually enough
+- **`pve:cpu`**: host `coretemp` via **SSH** `sensors` on the PVE host — `/nodes/.../execute` is *not* for shell commands ([Proxmox forum](https://forum.proxmox.com/threads/proxmox-execute-command.26030/#post-130467))
+- Set `PROXMOX_SSH_USER` / `PROXMOX_SSH_PASSWORD` (or `proxmoxSsh*` in `servers.json`); optional `PROXMOX_SSH_HOST` if SSH differs from API host
+- Minimal ACL for disks only:
+  ```bash
+  pveum acl modify /nodes/waw01-pve -token 'user@pam!ifc' -role PVEAuditor
+  ```
 
 ### ⚡ Performance Optimizations
 - **Combined SSH commands** for faster fan speed application

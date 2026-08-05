@@ -5,7 +5,7 @@ require_once __DIR__ . '/ilo-zones.php';
 /**
  * fanControlSources — what feeds max() for auto fan speed.
  *
- * Proxmox: pve:cpu, pve:disks
+ * Proxmox: pve:cpu (SSH sensors on host), pve:disks (API token)
  * iLO zones: ilo:all, ilo:ambient, ilo:cpu, ilo:memory, ilo:vr, ilo:storage,
  *            ilo:power, ilo:chipset, ilo:pci, ilo:other
  */
